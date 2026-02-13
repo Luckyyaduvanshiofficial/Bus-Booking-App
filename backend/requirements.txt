@@ -20,6 +20,9 @@ supabase==2.4.0
 # For Cashfree integration
 cashfree-pg==0.3.2
 
+# For Cloudinary media uploads
+cloudinary==1.38.0
+
 # For admin panel
 django-jazzmin==3.0.0
 

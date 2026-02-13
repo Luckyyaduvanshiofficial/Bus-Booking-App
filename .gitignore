@@ -1,0 +1,79 @@
+# ═══════════════════════════════════════════════════════
+# Bus Booking Platform - .gitignore
+# ═══════════════════════════════════════════════════════
+
+# ── Python ────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ── Virtual Environment ──────────────────────────────
+.venv/
+venv/
+ENV/
+env/
+
+# ── Django ────────────────────────────────────────────
+*.sqlite3
+db.sqlite3
+backend/staticfiles/
+backend/static/
+backend/media/
+*.log
+
+# ── Environment Variables (SECRETS) ──────────────────
+.env
+.env.local
+.env.production
+.env.*.local
+!.env.example
+
+# ── IDE / Editor ─────────────────────────────────────
+.vscode/mcp.json
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Node.js / Frontend ──────────────────────────────
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+!frontend/.env.example
+.turbo/
+
+# ── Test Output / Temp Files ─────────────────────────
+test_api.py
+test_out.txt
+test_err.txt
+test_errors.txt
+test_results.txt
+test_buses*.txt
+*.test-output
+*.bak
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.pytest_cache/
+.tox/
+backend/phase1_smoke_test.py
+backend/testsprite_tests/
+
+# ── OS Files ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

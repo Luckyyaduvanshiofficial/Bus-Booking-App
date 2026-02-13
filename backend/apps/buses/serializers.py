@@ -1,5 +1,13 @@
+"""Bus, BusPhoto, BusAmenity, AvailabilityBlock serializers.
+
+Each serializer declares explicit fields and uses validate() where needed.
+"""
+
+from __future__ import annotations
+
 from rest_framework import serializers
-from .models import Bus, BusPhoto, BusAmenity, AvailabilityBlock
+
+from .models import AvailabilityBlock, Bus, BusAmenity, BusPhoto
 
 
 # ── Photo & Amenity ──────────────────────────────────────────
@@ -113,3 +121,52 @@ class BusCreateUpdateSerializer(serializers.ModelSerializer):
             'base_city', 'base_area',
         ]
         read_only_fields = ['id']
+
+    def validate_seating_capacity(self, value: int) -> int:
+        """Seating capacity must be realistic."""
+        if value < 1:
+            # Error Code: BUS-SERIAL-VAL-001
+            # Message: Seating capacity too low
+            # Cause: Value is less than 1
+            # Solution: Set seating_capacity to at least 1
+            raise serializers.ValidationError(
+                'Seating capacity must be at least 1.',
+                code='BUS-SERIAL-VAL-001',
+            )
+        if value > 100:
+            # Error Code: BUS-SERIAL-VAL-002
+            # Message: Seating capacity too high
+            # Cause: Value exceeds maximum allowed (100)
+            # Solution: Set seating_capacity to 100 or less
+            raise serializers.ValidationError(
+                'Seating capacity cannot exceed 100.',
+                code='BUS-SERIAL-VAL-002',
+            )
+        return value
+
+    def validate_price_per_km(self, value):
+        """Price per km must be positive."""
+        if value is not None and value <= 0:
+            # Error Code: BUS-SERIAL-VAL-003
+            # Message: Price per km must be positive
+            # Cause: Zero or negative price_per_km provided
+            # Solution: Set price_per_km to a positive value
+            raise serializers.ValidationError(
+                'Price per km must be positive.',
+                code='BUS-SERIAL-VAL-003',
+            )
+        return value
+
+    def validate(self, attrs: dict) -> dict:
+        """Cross-field validations for bus creation."""
+        base_price = attrs.get('base_price')
+        if base_price is not None and base_price < 0:
+            # Error Code: BUS-SERIAL-VAL-004
+            # Message: Base price cannot be negative
+            # Cause: Negative base_price value provided
+            # Solution: Set base_price to zero or a positive value
+            raise serializers.ValidationError(
+                {'base_price': 'Base price cannot be negative.'},
+                code='BUS-SERIAL-VAL-004',
+            )
+        return attrs

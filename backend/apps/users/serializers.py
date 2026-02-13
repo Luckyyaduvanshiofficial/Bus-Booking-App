@@ -1,4 +1,12 @@
+"""User, Operator, Document, Notification and Auth serializers.
+
+Each serializer declares explicit fields and applies validate() where needed.
+"""
+
+from __future__ import annotations
+
 from rest_framework import serializers
+
 from .models import CustomUser, Document, Notification
 
 
@@ -151,3 +159,40 @@ class RegisterSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'role': {'required': True},
         }
+
+    def validate_phone(self, value: str) -> str:
+        """Ensure phone number is digits only and reasonable length."""
+        cleaned = value.strip().lstrip('+')
+        if not cleaned.isdigit():
+            # Error Code: USR-SERIAL-VAL-001
+            # Message: Phone contains non-digit characters
+            # Cause: Phone number has letters or special characters
+            # Solution: Provide digits-only phone number
+            raise serializers.ValidationError(
+                'Phone must contain only digits.',
+                code='USR-SERIAL-VAL-001',
+            )
+        if len(cleaned) < 10 or len(cleaned) > 15:
+            # Error Code: USR-SERIAL-VAL-002
+            # Message: Phone number length invalid
+            # Cause: Phone number is shorter than 10 or longer than 15 digits
+            # Solution: Provide a phone number between 10-15 digits
+            raise serializers.ValidationError(
+                'Phone must be 10-15 digits.',
+                code='USR-SERIAL-VAL-002',
+            )
+        return cleaned
+
+    def validate_role(self, value: str) -> str:
+        """Only customer and operator roles are allowed during registration."""
+        allowed = {CustomUser.Role.CUSTOMER.value, CustomUser.Role.OPERATOR.value}
+        if value not in allowed:
+            # Error Code: USR-SERIAL-VAL-003
+            # Message: Invalid registration role
+            # Cause: Role is not 'customer' or 'operator'
+            # Solution: Set role to 'customer' or 'operator' during registration
+            raise serializers.ValidationError(
+                'Role must be customer or operator.',
+                code='USR-SERIAL-VAL-003',
+            )
+        return value

@@ -7,6 +7,10 @@ import os
 from pathlib import Path
 from decouple import config, Csv
 
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+
 # Build paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = BASE_DIR.parent
@@ -96,6 +100,14 @@ DATABASES = {
     }
 }
 
+# Use SQLite for tests – fast, local, no remote DB dependency
+import sys
+if 'test' in sys.argv or 'test_coverage' in sys.argv:
+    DATABASES['default'] = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'test_db.sqlite3',
+    }
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -140,6 +152,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'EXCEPTION_HANDLER': 'apps.common.exceptions.custom_exception_handler',
 }
 
 # CORS Configuration
@@ -168,6 +181,14 @@ CLOUDINARY_CLOUD_NAME = config('CLOUDINARY_CLOUD_NAME', default='')
 CLOUDINARY_API_KEY = config('CLOUDINARY_API_KEY', default='')
 CLOUDINARY_API_SECRET = config('CLOUDINARY_API_SECRET', default='')
 
+# Initialize Cloudinary SDK
+cloudinary.config(
+    cloud_name=CLOUDINARY_CLOUD_NAME,
+    api_key=CLOUDINARY_API_KEY,
+    api_secret=CLOUDINARY_API_SECRET,
+    secure=True,
+)
+
 # Cashfree Configuration
 CASHFREE_APP_ID = config('CASHFREE_APP_ID', default='')
 CASHFREE_SECRET_KEY = config('CASHFREE_SECRET_KEY', default='')
@@ -177,13 +198,34 @@ CASHFREE_API_VERSION = config('CASHFREE_API_VERSION', default='2023-08-01')
 MSG91_API_KEY = config('MSG91_API_KEY', default='')
 MSG91_ROUTE = config('MSG91_ROUTE', default='4')  # Transactional SMS
 
-# Celery Configuration
-CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+# Celery Configuration (Upstash Redis with TLS)
+CELERY_BROKER_URL = config(
+    'CELERY_BROKER_URL',
+    default='rediss://localhost:6379/0',
+)
+CELERY_RESULT_BACKEND = config(
+    'CELERY_RESULT_BACKEND',
+    default='rediss://localhost:6379/0',
+)
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Asia/Kolkata'
+CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': 'CERT_REQUIRED'}
+CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': 'CERT_REQUIRED'}
+
+# ─── Django Cache Backend (Upstash Redis) ─────────────────────────────────────
+UPSTASH_REDIS_URL = config('UPSTASH_REDIS_URL', default='')
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': UPSTASH_REDIS_URL or 'redis://localhost:6379/0',
+    } if UPSTASH_REDIS_URL else {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'bus-booking-cache',
+    }
+}
 
 # Security Settings
 SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)

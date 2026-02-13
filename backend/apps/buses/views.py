@@ -1,25 +1,74 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework.filters import SearchFilter, OrderingFilter
-from datetime import datetime
+"""Bus ViewSets – thin controllers.
 
-from .models import Bus, BusPhoto, BusAmenity, AvailabilityBlock
+All business logic is delegated to services.py.
+"""
+
+from __future__ import annotations
+
+from django.db.models import QuerySet
+from django.shortcuts import get_object_or_404
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+
+from apps.users.permissions import IsAdmin, IsOperator
+
+from .models import AvailabilityBlock, Bus, BusAmenity, BusPhoto
 from .serializers import (
-    BusListSerializer, BusDetailSerializer, BusCreateUpdateSerializer,
-    BusPhotoSerializer, BusAmenitySerializer,
-    AvailabilityBlockSerializer, AvailabilityBlockCreateSerializer,
+    AvailabilityBlockCreateSerializer,
+    AvailabilityBlockSerializer,
+    BusAmenitySerializer,
+    BusCreateUpdateSerializer,
+    BusDetailSerializer,
+    BusListSerializer,
+    BusPhotoSerializer,
 )
-from apps.users.permissions import IsOperator, IsOperatorOrAdmin, IsAdmin
+from .services import BusService
+
+
+# ═══════════════════════════════════════════════════════════════
+#  BUS OWNERSHIP MIXIN
+# ═══════════════════════════════════════════════════════════════
+
+
+class BusOwnershipMixin:
+    """Shared bus lookup and permission check for photo/amenity/block viewsets."""
+
+    def get_bus(self) -> Bus:
+        """Look up the bus by URL kwarg, returning 404 if not found."""
+        return get_object_or_404(
+            Bus.objects.select_related('operator'),
+            id=self.kwargs['bus_id'],
+        )
+
+    def check_bus_permission(self, bus: Bus) -> None:
+        """Raise PermissionDenied if user is not the bus owner or admin."""
+        if bus.operator != self.request.user and self.request.user.role != 'admin':
+            # Error Code: BUS-VIEWS-PERM-002
+            # Message: Not authorized to modify this bus
+            # Cause: User is not the bus owner or an admin
+            # Solution: Only the bus operator or admin can perform this action
+            raise PermissionDenied(
+                "Not your bus.",
+                code='BUS-VIEWS-PERM-002',
+            )
 
 
 # ═══════════════════════════════════════════════════════════════
 #  BUS
 # ═══════════════════════════════════════════════════════════════
 
+
 class BusViewSet(viewsets.ModelViewSet):
+    """Bus CRUD + search and approval endpoints.
+
+    Delegates search and approval logic to BusService.
+    """
+
     queryset = Bus.objects.filter(is_active=True)
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['bus_type', 'ac_type', 'fuel_type', 'base_city']
@@ -43,12 +92,15 @@ class BusViewSet(viewsets.ModelViewSet):
             return BusCreateUpdateSerializer
         return BusListSerializer
 
-    def get_queryset(self):
-        qs = Bus.objects.filter(is_active=True)
+    def get_queryset(self) -> QuerySet:
+        """Filter buses with optimized queries."""
+        qs = Bus.objects.filter(
+            is_active=True,
+        ).select_related('operator').prefetch_related('photos', 'amenities')
 
         # Public sees only approved buses
         if not self.request.user.is_authenticated or self.request.user.role == 'customer':
-            qs = qs.filter(is_approved=True)
+            qs = qs.filter(approval_status='approved')
 
         # Price range
         min_p = self.request.query_params.get('min_price')
@@ -63,79 +115,53 @@ class BusViewSet(viewsets.ModelViewSet):
         if cap:
             qs = qs.filter(seating_capacity__gte=cap)
 
-        # City filter (uses base_city field now)
+        # City filter
         city = self.request.query_params.get('city')
         if city:
             qs = qs.filter(base_city__icontains=city)
 
         return qs
 
-    def perform_create(self, serializer):
+    def perform_create(self, serializer) -> None:
+        """Only operators can create buses."""
         if self.request.user.role != 'operator':
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only operators can create buses.")
+            # Error Code: BUS-VIEWS-PERM-001
+            # Message: Only operators can create buses
+            # Cause: Non-operator user attempted to create a bus
+            # Solution: Ensure user.role == 'operator' before calling
+            raise PermissionDenied(
+                "Only operators can create buses.",
+                code='BUS-VIEWS-PERM-001',
+            )
         serializer.save(operator=self.request.user)
 
-    # ── Search (POST) ────────────────────────────────────────
-
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
-    def search(self, request):
+    def search(self, request) -> Response:
         """Advanced search: filter by date availability, passengers, city."""
-        date_str = request.data.get('date')
-        passengers = request.data.get('passengers')
-        city = request.data.get('city')
-        bus_type = request.data.get('bus_type')
-
-        qs = Bus.objects.filter(is_active=True, is_approved=True)
-
-        if passengers:
-            qs = qs.filter(seating_capacity__gte=passengers)
-        if city:
-            qs = qs.filter(base_city__icontains=city)
-        if bus_type:
-            qs = qs.filter(bus_type=bus_type)
-
-        # Exclude buses blocked on the requested date
-        if date_str:
-            try:
-                search_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                blocked_ids = AvailabilityBlock.objects.filter(
-                    blocked_date=search_date,
-                ).values_list('bus_id', flat=True)
-                qs = qs.exclude(id__in=blocked_ids)
-            except ValueError:
-                return Response(
-                    {'error': 'Invalid date format. Use YYYY-MM-DD'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        serializer = BusListSerializer(qs, many=True)
-        return Response(serializer.data)
-
-    # ── Operator's own buses ─────────────────────────────────
+        buses = BusService.search_available(
+            date=request.data.get('date'),
+            passengers=request.data.get('passengers'),
+            city=request.data.get('city'),
+            bus_type=request.data.get('bus_type'),
+        )
+        return Response(BusListSerializer(buses, many=True).data)
 
     @action(detail=False, methods=['get'], permission_classes=[IsOperator])
-    def my_buses(self, request):
-        buses = Bus.objects.filter(operator=request.user)
-        serializer = BusListSerializer(buses, many=True)
-        return Response(serializer.data)
-
-    # ── Admin approval ───────────────────────────────────────
+    def my_buses(self, request) -> Response:
+        """List the authenticated operator's own buses."""
+        buses = Bus.objects.filter(
+            operator=request.user,
+        ).select_related('operator').prefetch_related('photos', 'amenities')
+        return Response(BusListSerializer(buses, many=True).data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdmin])
-    def approve(self, request, pk=None):
+    def approve(self, request, pk=None) -> Response:
+        """Admin approves or rejects a bus."""
         bus = self.get_object()
-        act = request.data.get('action')  # 'approve' | 'reject'
-        if act == 'approve':
-            bus.is_approved = True
-            bus.approval_status = 'approved'
-        elif act == 'reject':
-            bus.is_approved = False
-            bus.approval_status = 'rejected'
-        else:
-            return Response({'error': 'action must be approve or reject'},
-                            status=status.HTTP_400_BAD_REQUEST)
-        bus.save(update_fields=['is_approved', 'approval_status'])
+        bus = BusService.approve_bus(
+            bus=bus,
+            action=request.data.get('action', ''),
+        )
         return Response(BusDetailSerializer(bus).data)
 
 
@@ -143,18 +169,23 @@ class BusViewSet(viewsets.ModelViewSet):
 #  BUS PHOTOS
 # ═══════════════════════════════════════════════════════════════
 
-class BusPhotoViewSet(viewsets.ModelViewSet):
+
+class BusPhotoViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
+    """Bus photo management."""
+
     serializer_class = BusPhotoSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return BusPhoto.objects.filter(bus_id=self.kwargs.get('bus_id'))
+    def get_queryset(self) -> QuerySet:
+        """Filter photos by bus."""
+        return BusPhoto.objects.filter(
+            bus_id=self.kwargs.get('bus_id'),
+        ).select_related('bus')
 
-    def perform_create(self, serializer):
-        bus = Bus.objects.get(id=self.kwargs['bus_id'])
-        if bus.operator != self.request.user and self.request.user.role != 'admin':
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Not your bus.")
+    def perform_create(self, serializer) -> None:
+        """Only the bus owner or admin can add photos."""
+        bus = self.get_bus()
+        self.check_bus_permission(bus)
         serializer.save(bus=bus)
 
 
@@ -162,18 +193,23 @@ class BusPhotoViewSet(viewsets.ModelViewSet):
 #  BUS AMENITIES
 # ═══════════════════════════════════════════════════════════════
 
-class BusAmenityViewSet(viewsets.ModelViewSet):
+
+class BusAmenityViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
+    """Bus amenity management."""
+
     serializer_class = BusAmenitySerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return BusAmenity.objects.filter(bus_id=self.kwargs.get('bus_id'))
+    def get_queryset(self) -> QuerySet:
+        """Filter amenities by bus."""
+        return BusAmenity.objects.filter(
+            bus_id=self.kwargs.get('bus_id'),
+        ).select_related('bus')
 
-    def perform_create(self, serializer):
-        bus = Bus.objects.get(id=self.kwargs['bus_id'])
-        if bus.operator != self.request.user and self.request.user.role != 'admin':
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Not your bus.")
+    def perform_create(self, serializer) -> None:
+        """Only the bus owner or admin can add amenities."""
+        bus = self.get_bus()
+        self.check_bus_permission(bus)
         serializer.save(bus=bus)
 
 
@@ -181,21 +217,26 @@ class BusAmenityViewSet(viewsets.ModelViewSet):
 #  AVAILABILITY BLOCKS
 # ═══════════════════════════════════════════════════════════════
 
-class AvailabilityBlockViewSet(viewsets.ModelViewSet):
+
+class AvailabilityBlockViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
+    """Availability block management."""
+
     serializer_class = AvailabilityBlockSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return AvailabilityBlock.objects.filter(bus_id=self.kwargs.get('bus_id'))
+    def get_queryset(self) -> QuerySet:
+        """Filter blocks by bus."""
+        return AvailabilityBlock.objects.filter(
+            bus_id=self.kwargs.get('bus_id'),
+        ).select_related('bus', 'booking')
 
     def get_serializer_class(self):
         if self.action == 'create':
             return AvailabilityBlockCreateSerializer
         return AvailabilityBlockSerializer
 
-    def perform_create(self, serializer):
-        bus = Bus.objects.get(id=self.kwargs['bus_id'])
-        if bus.operator != self.request.user and self.request.user.role != 'admin':
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Not your bus.")
+    def perform_create(self, serializer) -> None:
+        """Only the bus owner or admin can block dates."""
+        bus = self.get_bus()
+        self.check_bus_permission(bus)
         serializer.save(bus=bus)

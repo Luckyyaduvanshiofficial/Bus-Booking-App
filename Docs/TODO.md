@@ -28,72 +28,72 @@ Phase 6: Deployment & Launch (Week 6-8)    [BACKLOG]
 ## Tasks
 
 ### P1.1: Django Project Setup & Configuration
-- [ ] Install Django dependencies from requirements.txt
-- [ ] Create Django admin user (superuser)
-- [ ] Configure environment variables (.env file)
-- [ ] Test database connection (PostgreSQL)
-- [ ] Run initial migrations
-- [ ] Verify development server runs (http://localhost:8000)
-- [ ] Confirm API documentation available at /api/docs
+- [x] Install Django dependencies from requirements.txt
+- [x] Create Django admin user (superuser)
+- [x] Configure environment variables (.env file)
+- [x] Test database connection (PostgreSQL)
+- [x] Run initial migrations
+- [x] Verify development server runs (http://localhost:8000)
+- [x] Confirm API documentation available at /api/docs
 
 ### P1.2: User Authentication System
-- [ ] Create CustomUser model with phone-based authentication
-- [ ] Implement user roles (customer, operator, admin)
-- [ ] Setup Supabase integration for OTP verification
-- [ ] Create serializers for user registration/login
-- [ ] Build authentication API endpoints
-- [ ] Test OTP flow (send & verify)
-- [ ] Create user profile endpoints (GET, PUT)
+- [x] Create CustomUser model with phone-based authentication
+- [x] Implement user roles (customer, operator, admin)
+- [x] Setup Supabase integration for OTP verification
+- [x] Create serializers for user registration/login
+- [x] Build authentication API endpoints
+- [x] Test OTP flow (send & verify)
+- [x] Create user profile endpoints (GET, PUT)
 
 ### P1.3: Bus Management Module
-- [ ] Create Bus model with all fields from PRD schema
-- [ ] Create BusPhoto, BusAmenity, AvailabilityBlock models
-- [ ] Build bus serializers (list, detail, operator views)
-- [ ] Create bus search API with filters
-- [ ] Implement availability checking logic
-- [ ] Create operator bus management endpoints
-- [ ] Test search with various filters (type, price, amenities)
+- [x] Create Bus model with all fields from PRD schema
+- [x] Create BusPhoto, BusAmenity, AvailabilityBlock models
+- [x] Build bus serializers (list, detail, operator views)
+- [x] Create bus search API with filters
+- [x] Implement availability checking logic
+- [x] Create operator bus management endpoints
+- [x] Test search with various filters (type, price, amenities)
 
 ### P1.4: Booking System
-- [ ] Create Booking model with full specification from PRD
-- [ ] Create Payment model for Cashfree integration
-- [ ] Create BookingHistory model for status tracking
-- [ ] Build booking creation logic with pricing calculation
-- [ ] Implement booking status workflow
-- [ ] Create payment initiation flow (Cashfree integration stub)
-- [ ] Test booking creation and validation
+- [x] Create Booking model with full specification from PRD
+- [x] Create Payment model for Cashfree integration
+- [x] Create BookingHistory model for status tracking
+- [x] Build booking creation logic with pricing calculation
+- [x] Implement booking status workflow
+- [x] Create payment initiation flow (Cashfree integration stub)
+- [x] Test booking creation and validation
 
 ### P1.5: Reviews & Ratings
-- [ ] Create BusReview and OperatorReview models
-- [ ] Implement automatic rating calculation
-- [ ] Build review creation API
-- [ ] Create review listing API with pagination
-- [ ] Implement review approval/flagging (admin)
-- [ ] Test review submission and retrieval
+- [x] Create BusReview and OperatorReview models
+- [x] Implement automatic rating calculation
+- [x] Build review creation API
+- [x] Create review listing API with pagination
+- [x] Test review submission and retrieval
 
+- [x] Implement review approval/flagging (admin)
 ### P1.6: Document Management
-- [ ] Create Document model for operator documents
-- [ ] Build document upload endpoint
-- [ ] Implement document verification workflow (admin)
-- [ ] Create document listing API
-- [ ] Test upload and verification flow
+- [x] Create Document model for operator documents
+- [x] Build document upload endpoint
+- [x] Implement document verification workflow (admin)
+- [x] Create document listing API
+- [x] Test upload and verification flow
 
 ### P1.7: Admin Panel Customization
-- [ ] Install django-jazzmin for modern admin UI
-- [ ] Customize admin for Users app
-- [ ] Customize admin for Buses app
-- [ ] Customize admin for Bookings app
-- [ ] Customize admin for Reviews app
-- [ ] Customize admin for Documents app
-- [ ] Test admin panel (login, navigation, CRUD operations)
+- [x] Install django-jazzmin for modern admin UI
+- [x] Customize admin for Users app
+- [x] Customize admin for Buses app
+- [x] Customize admin for Bookings app
+- [x] Customize admin for Reviews app
+- [x] Customize admin for Documents app
+- [x] Test admin panel (login, navigation, CRUD operations)
 
 ### P1.8: Testing & Documentation
-- [ ] Write unit tests for all models
-- [ ] Write API endpoint tests
-- [ ] Document all API endpoints
-- [ ] Create postman collection for manual testing
-- [ ] Test error handling and validation
-- [ ] Verify all database migrations work
+- [x] Write unit tests for all models
+- [x] Write API endpoint tests
+- [x] Document all API endpoints
+- [x] Create postman collection for manual testing
+- [x] Test error handling and validation
+- [x] Verify all database migrations work
 
 ---
 

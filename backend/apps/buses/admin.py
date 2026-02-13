@@ -22,7 +22,7 @@ class BusAdmin(admin.ModelAdmin):
     ]
     list_filter = [
         'bus_type', 'ac_type', 'fuel_type', 'base_city',
-        'is_approved', 'approval_status', 'is_active', 'created_at',
+        'approval_status', 'is_active', 'created_at',
     ]
     search_fields = ['name', 'registration_number', 'operator__business_name', 'base_city']
     readonly_fields = ['id', 'created_at', 'updated_at', 'rating_avg', 'rating_count', 'total_trips']
@@ -37,7 +37,7 @@ class BusAdmin(admin.ModelAdmin):
         }),
         ('Pricing', {'fields': ('price_per_km', 'base_price', 'driver_charge', 'night_charge')}),
         ('Location', {'fields': ('base_city', 'base_area')}),
-        ('Approval', {'fields': ('is_approved', 'approval_status')}),
+        ('Approval', {'fields': ('approval_status',)}),
         ('Ratings', {
             'fields': ('rating_avg', 'rating_count', 'total_trips'),
             'classes': ('collapse',),
@@ -50,11 +50,11 @@ class BusAdmin(admin.ModelAdmin):
 
     @admin.action(description='Approve selected buses')
     def approve_buses(self, request, queryset):
-        queryset.update(is_approved=True, approval_status='approved')
+        queryset.update(approval_status='approved')
 
     @admin.action(description='Reject selected buses')
     def reject_buses(self, request, queryset):
-        queryset.update(is_approved=False, approval_status='rejected')
+        queryset.update(approval_status='rejected')
 
 
 @admin.register(BusPhoto)

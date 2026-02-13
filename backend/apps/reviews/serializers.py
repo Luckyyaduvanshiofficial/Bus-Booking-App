@@ -1,4 +1,9 @@
+"""Review serializers with business-rule validation."""
+
+from __future__ import annotations
+
 from rest_framework import serializers
+
 from .models import BusReview, OperatorReview
 
 
@@ -39,15 +44,43 @@ class BusReviewCreateSerializer(serializers.ModelSerializer):
     def validate_booking(self, booking):
         request = self.context.get('request')
         if booking.customer != request.user:
-            raise serializers.ValidationError("You can only review your own bookings.")
+            # Error Code: REV-SERIAL-VAL-001
+            # Message: Cannot review another user's booking
+            # Cause: Authenticated user is not the booking customer
+            # Solution: Only review bookings that belong to you
+            raise serializers.ValidationError(
+                "You can only review your own bookings.",
+                code='REV-SERIAL-VAL-001',
+            )
         if booking.status != 'completed':
-            raise serializers.ValidationError("Only completed bookings can be reviewed.")
+            # Error Code: REV-SERIAL-VAL-002
+            # Message: Booking not completed
+            # Cause: Booking status is not 'completed'
+            # Solution: Wait for the trip to be marked as completed
+            raise serializers.ValidationError(
+                "Only completed bookings can be reviewed.",
+                code='REV-SERIAL-VAL-002',
+            )
         if hasattr(booking, 'review'):
-            raise serializers.ValidationError("This booking already has a review.")
+            # Error Code: REV-SERIAL-VAL-003
+            # Message: Duplicate review
+            # Cause: A review already exists for this booking
+            # Solution: Each booking can only be reviewed once
+            raise serializers.ValidationError(
+                "This booking already has a review.",
+                code='REV-SERIAL-VAL-003',
+            )
         return booking
 
 
 class OperatorReviewSerializer(serializers.ModelSerializer):
+    """Serializer for OperatorReview (supports create/update).
+
+    Writable fields: operator, reviewer, responsiveness_rating,
+    professionalism_rating, reliability_rating, comment.
+    Read-only fields: id, overall_rating, is_approved, created_at.
+    """
+
     reviewer_name = serializers.CharField(source='reviewer.name', read_only=True)
 
     class Meta:
@@ -58,4 +91,19 @@ class OperatorReviewSerializer(serializers.ModelSerializer):
             'reliability_rating', 'overall_rating',
             'comment', 'is_approved', 'created_at',
         ]
-        read_only_fields = ['id', 'overall_rating', 'is_approved', 'created_at']
+        read_only_fields = ['id', 'reviewer', 'overall_rating', 'is_approved', 'created_at']
+
+    def validate(self, attrs: dict) -> dict:
+        """Ensure all sub-ratings are within valid range (1-5)."""
+        for field in ('responsiveness_rating', 'professionalism_rating', 'reliability_rating'):
+            value = attrs.get(field)
+            if value is not None and not (1 <= value <= 5):
+                # Error Code: REV-SERIAL-VAL-004
+                # Message: Rating out of range
+                # Cause: Sub-rating value is not between 1 and 5
+                # Solution: Provide a rating between 1 and 5
+                raise serializers.ValidationError(
+                    {field: 'Rating must be between 1 and 5.'},
+                    code='REV-SERIAL-VAL-004',
+                )
+        return attrs

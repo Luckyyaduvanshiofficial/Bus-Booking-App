@@ -1,10 +1,21 @@
+"""Booking, Payment, Coupon serializers.
+
+Each serializer declares explicit fields and uses validate() for business rules.
+"""
+
+from __future__ import annotations
+
 from rest_framework import serializers
-from .models import Booking, Payment, BookingHistory, Coupon, CouponUsage
+
+from .models import Booking, BookingHistory, Coupon, CouponUsage, Payment
 
 
 # ── Payment ──────────────────────────────────────────────────
 
+
 class PaymentSerializer(serializers.ModelSerializer):
+    """Read-only payment representation."""
+
     class Meta:
         model = Payment
         fields = [
@@ -117,13 +128,97 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'booking_number', 'total_amount', 'status']
 
+    def validate(self, attrs: dict) -> dict:
+        """Validate booking business rules."""
+        bus = attrs.get('bus')
+        if bus and not bus.is_active:
+            # Error Code: BOK-SERIAL-VAL-001
+            # Message: Bus is no longer active
+            # Cause: The selected bus has been deactivated
+            # Solution: Choose a different active bus
+            raise serializers.ValidationError(
+                {'bus': 'This bus is no longer active.'},
+                code='BOK-SERIAL-VAL-001',
+            )
+        if bus and not bus.is_approved:
+            # Error Code: BOK-SERIAL-VAL-002
+            # Message: Bus not yet approved
+            # Cause: The selected bus is pending admin approval
+            # Solution: Choose an approved bus or wait for approval
+            raise serializers.ValidationError(
+                {'bus': 'This bus has not been approved yet.'},
+                code='BOK-SERIAL-VAL-002',
+            )
+
+        passenger_count = attrs.get('passenger_count')
+        if passenger_count is not None and passenger_count == 0:
+            raise serializers.ValidationError(
+                {'passenger_count': 'Must be at least 1.'},
+                code='BOK-SERIAL-VAL-006',
+            )
+        if bus and passenger_count is not None and passenger_count > bus.seating_capacity:
+            # Error Code: BOK-SERIAL-VAL-003
+            # Message: Passenger count exceeds bus capacity
+            # Cause: More passengers selected than bus can hold
+            # Solution: Choose a larger bus or reduce passenger count
+            raise serializers.ValidationError(
+                {'passenger_count': f'Exceeds bus capacity of {bus.seating_capacity}.'},
+                code='BOK-SERIAL-VAL-003',
+            )
+
+        pickup_date = attrs.get('pickup_date')
+        return_date = attrs.get('return_date')
+        if pickup_date and return_date and return_date < pickup_date:
+            # Error Code: BOK-SERIAL-VAL-004
+            # Message: Return date before pickup date
+            # Cause: Invalid date range — return_date < pickup_date
+            # Solution: Set return_date after pickup_date
+            raise serializers.ValidationError(
+                {'return_date': 'Return date cannot be before pickup date.'},
+                code='BOK-SERIAL-VAL-004',
+            )
+
+        trip_type = attrs.get('trip_type')
+        if trip_type == 'round_trip' and not return_date:
+            # Error Code: BOK-SERIAL-VAL-005
+            # Message: Return date required for round trips
+            # Cause: Round trip selected but no return_date provided
+            # Solution: Provide a return_date for round trip bookings
+            raise serializers.ValidationError(
+                {'return_date': 'Return date is required for round trips.'},
+                code='BOK-SERIAL-VAL-005',
+            )
+
+        return attrs
+
 
 class BookingStatusUpdateSerializer(serializers.Serializer):
-    """Operator / Admin updates booking status."""
+    """Operator / Admin updates booking status.
+
+    Accepts 'confirmed' or 'rejected' for operator respond action.
+    The service layer maps 'rejected' to the appropriate internal status.
+
+    Error Codes:
+        BOK-SERIAL-VAL-007: Invalid status transition value
+    """
+
+    # Error Code: BOK-SERIAL-VAL-007
+    # Message: Invalid status value for respond action
+    # Cause: Status must be 'confirmed' or 'rejected'
+    # Solution: Pass status='confirmed' or status='rejected'
+    RESPOND_CHOICES = [
+        ('confirmed', 'Confirmed'),
+        ('rejected', 'Rejected'),
+    ]
     status = serializers.ChoiceField(
-        choices=['confirmed', 'rejected', 'completed', 'cancelled'],
+        choices=RESPOND_CHOICES,
+        required=True,
+        help_text="New booking status: 'confirmed' or 'rejected'.",
     )
-    reason = serializers.CharField(required=False, allow_blank=True)
+    reason = serializers.CharField(
+        required=False, allow_blank=True,
+        help_text='Optional reason for the status change (e.g. rejection reason).',
+    )
 
 
 # ── History ──────────────────────────────────────────────────

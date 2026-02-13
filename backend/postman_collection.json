@@ -1,0 +1,809 @@
+{
+  "info": {
+    "name": "Bus Booking Platform API v1",
+    "description": "Complete API collection for the Bus Booking Platform.\n\nBase URL: {{base_url}}/api/v1/\n\nAuth: Token-based (send `Authorization: Token <token>` header)\n\nFlow: Send OTP → Verify OTP → Register → Use Token for all endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "token", "value": "" },
+    { "key": "admin_token", "value": "" },
+    { "key": "operator_token", "value": "" },
+    { "key": "user_id", "value": "" },
+    { "key": "bus_id", "value": "" },
+    { "key": "booking_id", "value": "" },
+    { "key": "payment_id", "value": "" },
+    { "key": "review_id", "value": "" },
+    { "key": "document_id", "value": "" },
+    { "key": "notification_id", "value": "" },
+    { "key": "photo_id", "value": "" },
+    { "key": "amenity_id", "value": "" },
+    { "key": "availability_id", "value": "" },
+    { "key": "coupon_code", "value": "WELCOME10" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Authentication endpoints (OTP-based via Supabase)",
+      "item": [
+        {
+          "name": "Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/auth/send-otp/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "auth", "send-otp", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+919876543210\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/auth/verify-otp/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "auth", "verify-otp", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+919876543210\",\n  \"otp\": \"123456\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.token) {",
+                  "  pm.collectionVariables.set('token', jsonData.token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/auth/register/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "auth", "register", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"+919876543210\",\n  \"full_name\": \"Test User\",\n  \"email\": \"test@example.com\",\n  \"role\": \"customer\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.token) {",
+                  "  pm.collectionVariables.set('token', jsonData.token);",
+                  "}",
+                  "if (jsonData.user && jsonData.user.id) {",
+                  "  pm.collectionVariables.set('user_id', jsonData.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "description": "User management endpoints",
+      "item": [
+        {
+          "name": "Me (Current User)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/users/me/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "users", "me", ""] }
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/users/update_profile/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "users", "update_profile", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Updated Name\",\n  \"email\": \"updated@example.com\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List Users (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{admin_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/users/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "users", ""] }
+          }
+        },
+        {
+          "name": "Verify User (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/users/{{user_id}}/verify/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "users", "{{user_id}}", "verify", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Operators",
+      "description": "Operator-specific endpoints",
+      "item": [
+        {
+          "name": "Register as Operator",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/operators/register_as_operator/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "operators", "register_as_operator", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"company_name\": \"My Bus Company\",\n  \"company_address\": \"123 Main Street, Mumbai\"\n}"
+            }
+          }
+        },
+        {
+          "name": "My Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/operators/my_profile/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "operators", "my_profile", ""] }
+          }
+        },
+        {
+          "name": "Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/operators/dashboard/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "operators", "dashboard", ""] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "description": "Document upload & verification (operator KYC)",
+      "item": [
+        {
+          "name": "Upload Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/documents/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "documents", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"document_type\": \"license\",\n  \"document_number\": \"DL-1234567890\",\n  \"file_url\": \"https://cloudinary.com/sample.pdf\",\n  \"expiry_date\": \"2027-12-31\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('document_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Documents",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/documents/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "documents", ""] }
+          }
+        },
+        {
+          "name": "Verify Document (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/documents/{{document_id}}/verify/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "documents", "{{document_id}}", "verify", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "description": "In-app notification management",
+      "item": [
+        {
+          "name": "List Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/notifications/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "notifications", ""] }
+          }
+        },
+        {
+          "name": "Mark One Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/notifications/{{notification_id}}/mark_read/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "notifications", "{{notification_id}}", "mark_read", ""] }
+          }
+        },
+        {
+          "name": "Mark All Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/users/notifications/mark_all_read/", "host": ["{{base_url}}"], "path": ["api", "v1", "users", "notifications", "mark_all_read", ""] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Buses",
+      "description": "Bus CRUD, search, approval, photos, amenities, availability",
+      "item": [
+        {
+          "name": "List Buses (Public)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/buses/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", ""] }
+          }
+        },
+        {
+          "name": "Create Bus (Operator)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Luxury Express\",\n  \"registration_number\": \"MH01AB1234\",\n  \"bus_type\": \"luxury\",\n  \"capacity\": 40,\n  \"base_price\": 5000,\n  \"price_per_km\": 25.00,\n  \"description\": \"Premium luxury bus with AC and WiFi\",\n  \"city\": \"Mumbai\",\n  \"state\": \"Maharashtra\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('bus_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Bus Detail",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", ""] }
+          }
+        },
+        {
+          "name": "Update Bus (Operator)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"base_price\": 5500\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete Bus (Operator)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", ""] }
+          }
+        },
+        {
+          "name": "Search Buses",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/search/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "search", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"city\": \"Mumbai\",\n  \"date\": \"2026-03-15\",\n  \"passengers\": 20\n}"
+            }
+          }
+        },
+        {
+          "name": "My Buses (Operator)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/my_buses/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "my_buses", ""] }
+          }
+        },
+        {
+          "name": "Approve Bus (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/approve/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "approve", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Add Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/photos/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "photos", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_url\": \"https://res.cloudinary.com/sample/bus.jpg\",\n  \"caption\": \"Interior view\",\n  \"is_primary\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('photo_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Photos",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/photos/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "photos", ""] }
+          }
+        },
+        {
+          "name": "Delete Photo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/photos/{{photo_id}}/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "photos", "{{photo_id}}", ""] }
+          }
+        },
+        {
+          "name": "Add Amenity",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/amenities/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "amenities", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"WiFi\",\n  \"icon\": \"wifi\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('amenity_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Amenities",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/amenities/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "amenities", ""] }
+          }
+        },
+        {
+          "name": "Remove Amenity",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/amenities/{{amenity_id}}/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "amenities", "{{amenity_id}}", ""] }
+          }
+        },
+        {
+          "name": "Block Date",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/availability/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "availability", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-03-20\",\n  \"reason\": \"Maintenance\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('availability_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Blocked Dates",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/availability/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "availability", ""] }
+          }
+        },
+        {
+          "name": "Unblock Date",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/buses/{{bus_id}}/availability/{{availability_id}}/", "host": ["{{base_url}}"], "path": ["api", "v1", "buses", "{{bus_id}}", "availability", "{{availability_id}}", ""] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bookings",
+      "description": "Booking lifecycle: create → respond → pay → complete/cancel",
+      "item": [
+        {
+          "name": "Create Booking (Customer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bus\": \"{{bus_id}}\",\n  \"pickup_location\": \"Mumbai Central\",\n  \"dropoff_location\": \"Pune Station\",\n  \"pickup_date\": \"2026-04-01\",\n  \"return_date\": \"2026-04-02\",\n  \"num_passengers\": 25,\n  \"trip_type\": \"round_trip\",\n  \"distance_km\": 150\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('booking_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List My Bookings",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", ""] }
+          }
+        },
+        {
+          "name": "Get Booking Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "{{booking_id}}", ""] }
+          }
+        },
+        {
+          "name": "Respond to Booking (Operator)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/respond/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "{{booking_id}}", "respond", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"confirm\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Cancel Booking (Customer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/cancel/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "{{booking_id}}", "cancel", ""] }
+          }
+        },
+        {
+          "name": "Complete Booking (Operator)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{operator_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/complete/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "{{booking_id}}", "complete", ""] }
+          }
+        },
+        {
+          "name": "Booking History",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/history/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "{{booking_id}}", "history", ""] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "description": "Payment processing via Cashfree",
+      "item": [
+        {
+          "name": "Initiate Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/payments/initiate/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "payments", "initiate", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"booking_id\": \"{{booking_id}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('payment_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/payments/{{payment_id}}/confirm/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "payments", "{{payment_id}}", "confirm", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cf_order_id\": \"cf_test_order_123\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Coupons",
+      "description": "Coupon management and validation",
+      "item": [
+        {
+          "name": "List Coupons",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/coupons/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "coupons", ""] }
+          }
+        },
+        {
+          "name": "Apply Coupon",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/bookings/coupons/apply/", "host": ["{{base_url}}"], "path": ["api", "v1", "bookings", "coupons", "apply", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{coupon_code}}\",\n  \"booking_amount\": 10000\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reviews",
+      "description": "Bus and operator review management",
+      "item": [
+        {
+          "name": "Create Bus Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/reviews/bus/", "host": ["{{base_url}}"], "path": ["api", "v1", "reviews", "bus", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"booking\": \"{{booking_id}}\",\n  \"bus\": \"{{bus_id}}\",\n  \"rating_overall\": 5,\n  \"rating_cleanliness\": 4,\n  \"rating_punctuality\": 5,\n  \"rating_comfort\": 4,\n  \"rating_value_for_money\": 5,\n  \"comment\": \"Excellent bus service, very clean and on time!\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.id) {",
+                  "  pm.collectionVariables.set('review_id', jsonData.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Bus Reviews (Public)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/reviews/bus/", "host": ["{{base_url}}"], "path": ["api", "v1", "reviews", "bus", ""] }
+          }
+        },
+        {
+          "name": "Bus Reviews by Bus ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/reviews/bus/bus_reviews/?bus_id={{bus_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "reviews", "bus", "bus_reviews", ""], "query": [{ "key": "bus_id", "value": "{{bus_id}}" }] }
+          }
+        },
+        {
+          "name": "Moderate Bus Review (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/reviews/bus/{{review_id}}/moderate/", "host": ["{{base_url}}"], "path": ["api", "v1", "reviews", "bus", "{{review_id}}", "moderate", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Create Operator Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Token {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/v1/reviews/operator/", "host": ["{{base_url}}"], "path": ["api", "v1", "reviews", "operator", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"booking\": \"{{booking_id}}\",\n  \"operator\": \"{{user_id}}\",\n  \"rating_overall\": 4,\n  \"rating_communication\": 5,\n  \"rating_reliability\": 4,\n  \"rating_value_for_money\": 4,\n  \"comment\": \"Great operator, very professional and communicative.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List Operator Reviews (Public)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/reviews/operator/", "host": ["{{base_url}}"], "path": ["api", "v1", "reviews", "operator", ""] }
+          }
+        }
+      ]
+    }
+  ]
+}

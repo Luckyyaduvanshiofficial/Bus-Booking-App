@@ -1,133 +1,87 @@
-from django.shortcuts import get_object_or_404
-from rest_framework import viewsets, status, generics
+"""User ViewSets & auth FBVs – thin controllers.
+
+All business logic is delegated to services.py.
+"""
+
+from __future__ import annotations
+
+from django.db.models import QuerySet
+from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes as perm_classes
-from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.authtoken.models import Token
+from rest_framework.response import Response
 
 from .models import CustomUser, Document, Notification
+from .permissions import IsAdmin, IsOperator, IsOperatorOrAdmin
 from .serializers import (
-    UserSerializer, UserProfileSerializer,
-    OperatorSerializer, OperatorRegistrationSerializer,
-    DocumentSerializer, DocumentUploadSerializer, DocumentVerifySerializer,
+    DocumentSerializer,
+    DocumentUploadSerializer,
+    DocumentVerifySerializer,
     NotificationSerializer,
-    OTPRequestSerializer, OTPVerifySerializer, RegisterSerializer,
+    OperatorRegistrationSerializer,
+    OperatorSerializer,
+    OTPRequestSerializer,
+    OTPVerifySerializer,
+    RegisterSerializer,
+    UserProfileSerializer,
+    UserSerializer,
 )
-from .permissions import IsAdmin, IsOperator, IsOperatorOrAdmin, IsOwnerOrAdmin
+from .services import AuthService, DocumentService, OperatorService, UserService
 
 
 # ═══════════════════════════════════════════════════════════════
 #  AUTH  –  Supabase OTP flow
 # ═══════════════════════════════════════════════════════════════
 
+
 @api_view(['POST'])
 @perm_classes([AllowAny])
-def send_otp(request):
+def send_otp(request) -> Response:
     """Send OTP to phone number via Supabase Auth."""
     serializer = OTPRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    phone = serializer.validated_data['phone']
 
-    try:
-        from django.conf import settings
-        from supabase import create_client
-
-        supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        supabase.auth.sign_in_with_otp({'phone': phone})
-        return Response({'message': 'OTP sent successfully'}, status=status.HTTP_200_OK)
-    except Exception as e:
-        return Response(
-            {'error': f'Failed to send OTP: {str(e)}'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    result = AuthService.send_otp(phone=serializer.validated_data['phone'])
+    return Response(result, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
 @perm_classes([AllowAny])
-def verify_otp(request):
+def verify_otp(request) -> Response:
     """Verify OTP and return auth token."""
     serializer = OTPVerifySerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    phone = serializer.validated_data['phone']
-    otp = serializer.validated_data['otp']
 
-    try:
-        from django.conf import settings
-        from supabase import create_client
-
-        supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        resp = supabase.auth.verify_otp({'phone': phone, 'token': otp, 'type': 'sms'})
-
-        if not resp.user:
-            return Response({'error': 'Invalid OTP'}, status=status.HTTP_401_UNAUTHORIZED)
-
-        # Get or create Django user
-        user, created = CustomUser.objects.get_or_create(
-            phone=phone,
-            defaults={
-                'username': phone,
-                'supabase_uid': resp.user.id,
-            },
-        )
-        if not created and not user.supabase_uid:
-            user.supabase_uid = resp.user.id
-            user.save(update_fields=['supabase_uid'])
-
-        # Issue DRF Token
-        token, _ = Token.objects.get_or_create(user=user)
-
-        return Response({
-            'token': token.key,
-            'user': UserSerializer(user).data,
-            'is_new_user': created,
-        })
-
-    except Exception as e:
-        return Response(
-            {'error': f'Verification failed: {str(e)}'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    result = AuthService.verify_otp(
+        phone=serializer.validated_data['phone'],
+        otp=serializer.validated_data['otp'],
+    )
+    return Response(result)
 
 
 @api_view(['POST'])
 @perm_classes([AllowAny])
-def register(request):
+def register(request) -> Response:
     """Register a new user (after OTP verification)."""
     serializer = RegisterSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    phone = serializer.validated_data['phone']
-    user, created = CustomUser.objects.get_or_create(
-        phone=phone,
-        defaults={
-            'username': phone,
-            'name': serializer.validated_data.get('name', ''),
-            'email': serializer.validated_data.get('email', ''),
-            'role': serializer.validated_data.get('role', 'customer'),
-        },
+    result = AuthService.register_user(validated_data=serializer.validated_data)
+    http_status = (
+        status.HTTP_201_CREATED if result.get('created') else status.HTTP_200_OK
     )
-
-    if not created:
-        # Update fields for existing user
-        for field in ('name', 'email', 'role'):
-            val = serializer.validated_data.get(field)
-            if val:
-                setattr(user, field, val)
-        user.save()
-
-    token, _ = Token.objects.get_or_create(user=user)
-    return Response({
-        'token': token.key,
-        'user': UserSerializer(user).data,
-    }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+    result.pop('created', None)
+    return Response(result, status=http_status)
 
 
 # ═══════════════════════════════════════════════════════════════
 #  USER PROFILE
 # ═══════════════════════════════════════════════════════════════
 
+
 class UserViewSet(viewsets.ModelViewSet):
     """Admin-level user management + self-service profile endpoints."""
+
     queryset = CustomUser.objects.all()
     serializer_class = UserSerializer
 
@@ -139,13 +93,12 @@ class UserViewSet(viewsets.ModelViewSet):
     # ── Self-service ──────────────────────────────────────────
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
-    def me(self, request):
+    def me(self, request) -> Response:
         """Return current user's full profile."""
-        serializer = UserProfileSerializer(request.user)
-        return Response(serializer.data)
+        return Response(UserProfileSerializer(request.user).data)
 
     @action(detail=False, methods=['put', 'patch'], permission_classes=[IsAuthenticated])
-    def update_profile(self, request):
+    def update_profile(self, request) -> Response:
         """Update current user's profile."""
         serializer = UserProfileSerializer(
             request.user, data=request.data, partial=True,
@@ -157,23 +110,24 @@ class UserViewSet(viewsets.ModelViewSet):
     # ── Admin actions ─────────────────────────────────────────
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdmin])
-    def verify(self, request, pk=None):
+    def verify(self, request, pk=None) -> Response:
         """Admin approves / rejects an operator."""
-        user = self.get_object()
-        act = request.data.get('action')  # 'approve' | 'reject'
-
-        if act == 'approve':
-            user.is_verified = True
-            user.verification_status = 'verified'
-            user.save(update_fields=['is_verified', 'verification_status'])
-        elif act == 'reject':
-            user.verification_status = 'rejected'
-            user.rejection_reason = request.data.get('reason', '')
-            user.save(update_fields=['verification_status', 'rejection_reason'])
-        else:
-            return Response({'error': 'action must be approve or reject'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
+        try:
+            user = self.get_object()
+        except Exception:
+            # Error Code: USR-VIEWS-NOTFOUND-001
+            # Message: User not found
+            # Cause: User ID doesn't exist
+            # Solution: Check user_id in request
+            return Response(
+                {'error': 'User not found', 'code': 'USR-VIEWS-NOTFOUND-001'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        user = UserService.verify_user(
+            user=user,
+            action=request.data.get('action', ''),
+            reason=request.data.get('reason', ''),
+        )
         return Response(UserSerializer(user).data)
 
 
@@ -181,7 +135,10 @@ class UserViewSet(viewsets.ModelViewSet):
 #  OPERATOR
 # ═══════════════════════════════════════════════════════════════
 
+
 class OperatorViewSet(viewsets.ModelViewSet):
+    """Operator management + dashboard."""
+
     queryset = CustomUser.objects.filter(role='operator')
     serializer_class = OperatorSerializer
 
@@ -193,86 +150,85 @@ class OperatorViewSet(viewsets.ModelViewSet):
         return [IsOperatorOrAdmin()]
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
-    def register_as_operator(self, request):
+    def register_as_operator(self, request) -> Response:
         """Convert current user to operator role."""
-        user = request.user
-        if user.role == 'operator':
-            return Response({'error': 'Already an operator'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        serializer = OperatorRegistrationSerializer(user, data=request.data, partial=True)
+        serializer = OperatorRegistrationSerializer(
+            request.user, data=request.data, partial=True,
+        )
         serializer.is_valid(raise_exception=True)
-        user.role = 'operator'
-        user.verification_status = 'pending'
-        serializer.save()
-
+        user = OperatorService.register_as_operator(
+            user=request.user,
+            validated_data=serializer.validated_data,
+        )
         return Response(OperatorSerializer(user).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'], permission_classes=[IsOperator])
-    def my_profile(self, request):
-        serializer = self.get_serializer(request.user)
-        return Response(serializer.data)
+    def my_profile(self, request) -> Response:
+        """Return operator's own profile."""
+        return Response(self.get_serializer(request.user).data)
 
     @action(detail=False, methods=['get'], permission_classes=[IsOperator])
-    def dashboard(self, request):
+    def dashboard(self, request) -> Response:
         """Operator dashboard summary."""
-        from apps.bookings.models import Booking
-
-        user = request.user
-        bookings = Booking.objects.filter(operator=user)
-        return Response({
-            'total_buses': user.total_buses,
-            'total_bookings': user.total_bookings,
-            'rating_avg': float(user.rating_avg),
-            'pending_bookings': bookings.filter(status='pending').count(),
-            'active_bookings': bookings.filter(status='confirmed').count(),
-            'completed_bookings': bookings.filter(status='completed').count(),
-        })
+        data = OperatorService.get_dashboard(operator=request.user)
+        return Response(data)
 
 
 # ═══════════════════════════════════════════════════════════════
 #  DOCUMENT
 # ═══════════════════════════════════════════════════════════════
 
+
 class DocumentViewSet(viewsets.ModelViewSet):
+    """Document upload and admin verification."""
+
     serializer_class = DocumentSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        user = self.request.user
-        if user.role == 'admin':
-            return Document.objects.all()
-        return Document.objects.filter(user=user)
+    def get_queryset(self) -> QuerySet:
+        """Admin sees all; others see only their own documents."""
+        if self.request.user.role == 'admin':
+            return Document.objects.select_related('user', 'verified_by').all()
+        return Document.objects.filter(
+            user=self.request.user,
+        ).select_related('user', 'verified_by')
 
     def get_serializer_class(self):
         if self.action == 'create':
             return DocumentUploadSerializer
         return DocumentSerializer
 
-    def perform_create(self, serializer):
+    def perform_create(self, serializer) -> None:
+        """Attach authenticated user to the document.
+
+        Validates that operator uploads their own documents.
+        """
+        # Error Code: DOC-VIEWS-PERM-001
+        # Message: Only bus operator can upload documents
+        # Cause: Unauthorized upload
+        # Solution: Check bus ownership
+        bus = serializer.validated_data.get('bus')
+        if bus and bus.operator != self.request.user and self.request.user.role != 'admin':
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied(
+                'You can only upload documents for your own buses.',
+                code='DOC-VIEWS-PERM-001',
+            )
         serializer.save(user=self.request.user)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdmin])
-    def verify(self, request, pk=None):
+    def verify(self, request, pk=None) -> Response:
         """Admin approves / rejects a document."""
-        doc = self.get_object()
         ser = DocumentVerifySerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        act = ser.validated_data['action']
-        if act == 'approve':
-            doc.verification_status = 'verified'
-            doc.verified_by = request.user
-            from django.utils import timezone
-            doc.verified_at = timezone.now()
-        elif act == 'reject':
-            doc.verification_status = 'rejected'
-            doc.rejection_reason = ser.validated_data.get('rejection_reason', '')
-            doc.verified_by = request.user
-            from django.utils import timezone
-            doc.verified_at = timezone.now()
-
-        doc.save()
+        doc = self.get_object()
+        doc = DocumentService.verify_document(
+            document=doc,
+            action=ser.validated_data['action'],
+            verified_by=request.user,
+            rejection_reason=ser.validated_data.get('rejection_reason', ''),
+        )
         return Response(DocumentSerializer(doc).data)
 
 
@@ -280,21 +236,29 @@ class DocumentViewSet(viewsets.ModelViewSet):
 #  NOTIFICATION
 # ═══════════════════════════════════════════════════════════════
 
+
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    """User notifications – read-only with mark-read actions."""
+
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user)
+    def get_queryset(self) -> QuerySet:
+        """Return only the authenticated user's notifications."""
+        return Notification.objects.filter(
+            user=self.request.user,
+        ).select_related('user')
 
     @action(detail=True, methods=['post'])
-    def mark_read(self, request, pk=None):
+    def mark_read(self, request, pk=None) -> Response:
+        """Mark a single notification as read."""
         notif = self.get_object()
         notif.is_read = True
         notif.save(update_fields=['is_read'])
         return Response({'status': 'read'})
 
     @action(detail=False, methods=['post'])
-    def mark_all_read(self, request):
+    def mark_all_read(self, request) -> Response:
+        """Mark all unread notifications as read."""
         self.get_queryset().filter(is_read=False).update(is_read=True)
         return Response({'status': 'all read'})
