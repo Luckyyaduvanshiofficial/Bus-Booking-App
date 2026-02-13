@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=tslvmtzvmolpboorjtkh"
+    },
+    "TestSprite": {
+      "command": "npx",
+      "args": [
+        "@testsprite/testsprite-mcp@latest"
+      ],
+      "env": {
+        "API_KEY": "sk-user-neb3m25EYLV4...nWQF1VaUvw5uJUYCEOGM"
+      }
+    }
+  },
+  "inputs": []
+}

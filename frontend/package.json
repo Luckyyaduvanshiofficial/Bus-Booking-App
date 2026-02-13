@@ -1,0 +1,37 @@
+{
+  "name": "bus-booking-frontend",
+  "version": "1.0.0",
+  "description": "Bus Booking Platform - Customer & Operator Web App",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "export": "next build && next export"
+  },
+  "dependencies": {
+    "next": "^14.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "axios": "^1.6.0",
+    "supabase": "^2.38.0",
+    "@supabase/auth-helpers-nextjs": "^0.8.0",
+    "zustand": "^4.4.0",
+    "tailwindcss": "^3.3.0",
+    "classnames": "^2.3.0",
+    "react-hook-form": "^7.48.0",
+    "react-icons": "^4.12.0",
+    "date-fns": "^2.30.0",
+    "leaflet": "^1.9.4",
+    "react-leaflet": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.0.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0"
+  }
+}

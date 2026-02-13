@@ -1,0 +1,30 @@
+Django==5.0.1
+djangorestframework==3.14.0
+python-decouple==3.8
+psycopg2-binary==2.9.9
+Pillow==10.1.0
+django-cors-headers==4.3.1
+django-filter==24.1
+drf-spectacular==0.27.0
+celery==5.3.4
+redis==5.0.1
+requests==2.31.0
+gunicorn==21.2.0
+whitenoise==6.6.0
+python-dateutil==2.8.2
+cryptography==41.0.7
+
+# For Supabase integration
+supabase==2.4.0
+
+# For Cashfree integration
+cashfree-pg==0.3.2
+
+# For admin panel
+django-jazzmin==3.0.0
+
+# For model soft deletes (optional)
+django-model-utils==4.3.1
+
+# For API documentation
+drf-yasg==1.21.7
