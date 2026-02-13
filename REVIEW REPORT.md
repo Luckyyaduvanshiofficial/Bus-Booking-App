@@ -533,3 +533,35 @@ def test_complete_booking_parallel_requests_single_side_effect():
 def test_webhook_duplicate_delivery_single_transition():
     """Verify webhook replay does not duplicate payment state changes"""
 ```
+
+---
+
+## CODE REVIEW START CHECKLIST (THIS RUN)
+
+To formally kick off review execution against the findings above, follow this sequence:
+
+1. **Stabilize scope and freeze baseline**
+   - Tag current backend commit before fixes.
+   - Capture DB schema version and applied migrations.
+
+2. **Address P0 in strict order**
+   - P0-A: enforce object-level ownership on all bus mutation endpoints.
+   - P0-B: lock/idempotency hardening for payment initiation.
+   - P0-C: lock-safe booking completion transition.
+   - P0-D: idempotent payment confirmation with row locks.
+
+3. **Add regression tests per blocker**
+   - Add one test per exploit path from each P0 finding.
+   - Include concurrency-focused tests where races were identified.
+
+4. **Run verification gates**
+   - Unit tests for `buses` + `bookings` apps.
+   - Error code registry checker.
+   - Manual API replay for key race scenarios.
+
+5. **Exit criteria for unblocking launch**
+   - All P0 fixes merged and green in CI.
+   - No unauthorized mutation path reproducible.
+   - No duplicate payment/booking side effects under parallel requests.
+
+**Tracking note:** Until steps 2–5 are complete, launch status remains **BLOCKED**.
