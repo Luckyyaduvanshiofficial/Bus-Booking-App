@@ -62,6 +62,13 @@ class BusOwnershipMixin:
         bus = getattr(obj, 'bus', None) or self.get_bus()
         self.check_bus_permission(bus)
 
+    def scope_queryset_to_owner_or_admin(self, queryset: QuerySet) -> QuerySet:
+        """Restrict nested management endpoints to bus owner/admin only."""
+        user = self.request.user
+        if user.role == 'admin':
+            return queryset
+        return queryset.filter(bus__operator=user)
+
 
 # ═══════════════════════════════════════════════════════════════
 #  BUS
@@ -203,9 +210,10 @@ class BusPhotoViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
 
     def get_queryset(self) -> QuerySet:
         """Filter photos by bus."""
-        return BusPhoto.objects.filter(
+        queryset = BusPhoto.objects.filter(
             bus_id=self.kwargs.get('bus_id'),
         ).select_related('bus')
+        return self.scope_queryset_to_owner_or_admin(queryset)
 
     def perform_create(self, serializer) -> None:
         """Only the bus owner or admin can add photos."""
@@ -237,9 +245,10 @@ class BusAmenityViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
 
     def get_queryset(self) -> QuerySet:
         """Filter amenities by bus."""
-        return BusAmenity.objects.filter(
+        queryset = BusAmenity.objects.filter(
             bus_id=self.kwargs.get('bus_id'),
         ).select_related('bus')
+        return self.scope_queryset_to_owner_or_admin(queryset)
 
     def perform_create(self, serializer) -> None:
         """Only the bus owner or admin can add amenities."""
@@ -271,9 +280,10 @@ class AvailabilityBlockViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
 
     def get_queryset(self) -> QuerySet:
         """Filter blocks by bus."""
-        return AvailabilityBlock.objects.filter(
+        queryset = AvailabilityBlock.objects.filter(
             bus_id=self.kwargs.get('bus_id'),
         ).select_related('bus', 'booking')
+        return self.scope_queryset_to_owner_or_admin(queryset)
 
     def get_serializer_class(self):
         if self.action == 'create':
