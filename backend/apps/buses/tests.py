@@ -370,6 +370,15 @@ class BusViewSetAPITest(APITestCase):
         self.customer.save(skip_validation=True)
         self.cust_token = Token.objects.create(user=self.customer)
 
+        self.other_operator = CustomUser(
+            phone='+919100000023', username='+919100000023',
+            name='Other Operator', role='operator', business_name='Other Travels',
+            commission_rate=Decimal('10.00'),
+        )
+        self.other_operator.set_password('test123')
+        self.other_operator.save(skip_validation=True)
+        self.other_op_token = Token.objects.create(user=self.other_operator)
+
         self.bus = Bus(
             operator=self.operator, name='API Bus', bus_type='mini_bus',
             seating_capacity=17, registration_number='RJ14MN0020',
@@ -377,6 +386,22 @@ class BusViewSetAPITest(APITestCase):
             is_active=True, approval_status='approved',
         )
         self.bus.save()
+
+        self.bus_photo = BusPhoto.objects.create(
+            bus=self.bus,
+            photo_url='https://example.com/api-bus.jpg',
+            photo_type='exterior_front',
+            is_primary=True,
+        )
+        self.bus_amenity = BusAmenity.objects.create(
+            bus=self.bus,
+            amenity='wifi',
+        )
+        self.availability_block = AvailabilityBlock.objects.create(
+            bus=self.bus,
+            blocked_date=dt.date(2026, 12, 31),
+            block_reason='maintenance',
+        )
 
         self.client = APIClient()
 
@@ -432,3 +457,42 @@ class BusViewSetAPITest(APITestCase):
             {'city': 'Jaipur'}, format='json',
         )
         self.assertEqual(resp.status_code, 200)
+
+    def test_other_operator_cannot_access_foreign_bus_photos(self) -> None:
+        """Nested photos endpoint should hide foreign operator resources."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.other_op_token.key}')
+
+        list_resp = self.client.get(f'/api/v1/buses/{self.bus.id}/photos/')
+        self.assertEqual(list_resp.status_code, 200)
+        self.assertEqual(list_resp.data['count'], 0)
+
+        detail_resp = self.client.get(
+            f'/api/v1/buses/{self.bus.id}/photos/{self.bus_photo.id}/',
+        )
+        self.assertEqual(detail_resp.status_code, 404)
+
+    def test_other_operator_cannot_access_foreign_bus_amenities(self) -> None:
+        """Nested amenities endpoint should hide foreign operator resources."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.other_op_token.key}')
+
+        list_resp = self.client.get(f'/api/v1/buses/{self.bus.id}/amenities/')
+        self.assertEqual(list_resp.status_code, 200)
+        self.assertEqual(list_resp.data['count'], 0)
+
+        detail_resp = self.client.delete(
+            f'/api/v1/buses/{self.bus.id}/amenities/{self.bus_amenity.id}/',
+        )
+        self.assertEqual(detail_resp.status_code, 404)
+
+    def test_other_operator_cannot_access_foreign_bus_availability_blocks(self) -> None:
+        """Nested availability endpoint should hide foreign operator resources."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.other_op_token.key}')
+
+        list_resp = self.client.get(f'/api/v1/buses/{self.bus.id}/availability/')
+        self.assertEqual(list_resp.status_code, 200)
+        self.assertEqual(list_resp.data['count'], 0)
+
+        detail_resp = self.client.delete(
+            f'/api/v1/buses/{self.bus.id}/availability/{self.availability_block.id}/',
+        )
+        self.assertEqual(detail_resp.status_code, 404)
