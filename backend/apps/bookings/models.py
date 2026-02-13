@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models, transaction, IntegrityError
+from django.db.models import Q
 from django.utils import timezone
 
 
@@ -203,7 +204,12 @@ class Booking(models.Model):
         return f"Booking {self.booking_number} – {self.customer}"
 
     def clean(self) -> None:
-        """Model-level validation with error codes from ERROR_REGISTRY.md."""
+        """Model-level validation with error codes from ERROR_REGISTRY.md.
+
+        Note: pickup_date past-date check only runs on creation (no pk yet).
+        This prevents save() from failing when updating status on bookings
+        whose trip date has already passed (e.g., marking as completed).
+        """
         super().clean()
         from django.core.exceptions import ValidationError
         from datetime import date as _date
@@ -212,7 +218,8 @@ class Booking(models.Model):
         # Message: Pickup datetime must be in future
         # Cause: Past date selected
         # Solution: Choose future date
-        if self.pickup_date and self.pickup_date < _date.today():
+        # Only validate on creation — existing bookings may have past dates
+        if not self.pk and self.pickup_date and self.pickup_date < _date.today():
             raise ValidationError(
                 'Pickup date must be in the future.',
                 code='BOK-MODELS-VAL-001',
@@ -252,18 +259,23 @@ class Booking(models.Model):
             )
 
     def save(self, *args, **kwargs) -> None:
-        """Generate booking number with retry on collision and save."""
-        self.clean()
+        """Generate booking number with random suffix and save.
+
+        Note: full_clean() is called in BookingService.create_booking()
+        before save(), so we do NOT call self.clean() here to avoid
+        double validation and extra DB queries.
+        """
         if not self.booking_number:
+            import secrets
             max_attempts = 5
             for attempt in range(max_attempts):
                 try:
                     with transaction.atomic():
                         today = date.today().strftime('%Y%m%d')
-                        count = Booking.objects.filter(
-                            created_at__date=date.today(),
-                        ).count() + 1 + attempt
-                        self.booking_number = f"BK-{today}-{count:03d}"
+                        # Use random 6-char hex suffix instead of count-based
+                        # to eliminate race conditions between concurrent inserts
+                        suffix = secrets.token_hex(3).upper()
+                        self.booking_number = f"BK-{today}-{suffix}"
                         super().save(*args, **kwargs)
                     return
                 except IntegrityError:
@@ -369,6 +381,13 @@ class Payment(models.Model):
             models.Index(fields=['booking']),
             models.Index(fields=['cf_order_id']),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['booking', 'payment_type'],
+                condition=Q(status='created'),
+                name='uniq_pending_payment_per_booking_type',
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"Payment ₹{self.amount} for {self.booking.booking_number}"
@@ -426,7 +445,10 @@ class BookingHistory(models.Model):
     booking: Booking = models.ForeignKey(
         Booking, on_delete=models.CASCADE, related_name='history',
     )
-    old_status: str = models.CharField(max_length=30, choices=Booking.Status.choices)
+    old_status: str = models.CharField(
+        max_length=30, choices=Booking.Status.choices, blank=True, default='',
+        help_text='Empty on initial booking creation.',
+    )
     new_status: str = models.CharField(max_length=30, choices=Booking.Status.choices)
     reason: str = models.TextField(blank=True, null=True)
     created_by: 'CustomUser' = models.ForeignKey(

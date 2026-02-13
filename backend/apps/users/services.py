@@ -100,9 +100,11 @@ class AuthService:
 
             token, _ = Token.objects.get_or_create(user=user)
 
+            from .serializers import UserSerializer
+
             return {
                 'token': token.key,
-                'user': user,
+                'user': UserSerializer(user).data,
                 'is_new_user': created,
             }
         except ValidationError:
@@ -143,7 +145,10 @@ class AuthService:
         )
 
         if not created:
-            for field in ('name', 'email', 'role'):
+            # Only update safe profile fields — NEVER allow role escalation.
+            # An existing user re-registering should not be able to change
+            # their role to 'admin' or 'operator' via this endpoint.
+            for field in ('name', 'email'):
                 val = validated_data.get(field)
                 if val:
                     setattr(user, field, val)
@@ -204,22 +209,30 @@ class OperatorService:
     def get_dashboard(*, operator: CustomUser) -> dict:
         """Get operator dashboard summary.
 
+        Uses a single aggregate query with conditional Count instead of
+        three separate .filter().count() calls.
+
         Args:
             operator: The operator user.
 
         Returns:
             Dict with dashboard metrics.
         """
+        from django.db.models import Count, Q
         from apps.bookings.models import Booking
 
-        bookings = Booking.objects.filter(operator=operator)
+        counts = Booking.objects.filter(operator=operator).aggregate(
+            pending=Count('id', filter=Q(status='pending')),
+            active=Count('id', filter=Q(status='confirmed')),
+            completed=Count('id', filter=Q(status='completed')),
+        )
         return {
             'total_buses': operator.total_buses,
             'total_bookings': operator.total_bookings,
             'rating_avg': float(operator.rating_avg) if operator.rating_avg is not None else None,
-            'pending_bookings': bookings.filter(status='pending').count(),
-            'active_bookings': bookings.filter(status='confirmed').count(),
-            'completed_bookings': bookings.filter(status='completed').count(),
+            'pending_bookings': counts['pending'],
+            'active_bookings': counts['active'],
+            'completed_bookings': counts['completed'],
         }
 
 

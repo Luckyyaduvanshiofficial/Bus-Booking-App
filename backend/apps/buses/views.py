@@ -57,13 +57,18 @@ class BusOwnershipMixin:
                 code='BUS-VIEWS-PERM-002',
             )
 
+    def check_object_bus_permission(self, obj) -> None:
+        """Authorize mutations on nested objects using their related bus."""
+        bus = getattr(obj, 'bus', None) or self.get_bus()
+        self.check_bus_permission(bus)
+
 
 # ═══════════════════════════════════════════════════════════════
 #  BUS
 # ═══════════════════════════════════════════════════════════════
 
 
-class BusViewSet(viewsets.ModelViewSet):
+class BusViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
     """Bus CRUD + search and approval endpoints.
 
     Delegates search and approval logic to BusService.
@@ -96,7 +101,11 @@ class BusViewSet(viewsets.ModelViewSet):
         """Filter buses with optimized queries."""
         qs = Bus.objects.filter(
             is_active=True,
-        ).select_related('operator').prefetch_related('photos', 'amenities')
+        ).select_related('operator').prefetch_related(
+            'photos',
+            'amenities',
+            'availability_blocks',
+        )
 
         # Public sees only approved buses
         if not self.request.user.is_authenticated or self.request.user.role == 'customer':
@@ -135,6 +144,16 @@ class BusViewSet(viewsets.ModelViewSet):
             )
         serializer.save(operator=self.request.user)
 
+    def perform_update(self, serializer) -> None:
+        """Only the bus owner or admin can update a bus."""
+        self.check_bus_permission(self.get_object())
+        serializer.save()
+
+    def perform_destroy(self, instance) -> None:
+        """Only the bus owner or admin can delete a bus."""
+        self.check_bus_permission(instance)
+        instance.delete()
+
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def search(self, request) -> Response:
         """Advanced search: filter by date availability, passengers, city."""
@@ -144,6 +163,12 @@ class BusViewSet(viewsets.ModelViewSet):
             city=request.data.get('city'),
             bus_type=request.data.get('bus_type'),
         )
+        # Paginate results to prevent OOM on large result sets
+        page = self.paginate_queryset(buses)
+        if page is not None:
+            return self.get_paginated_response(
+                BusListSerializer(page, many=True).data,
+            )
         return Response(BusListSerializer(buses, many=True).data)
 
     @action(detail=False, methods=['get'], permission_classes=[IsOperator])
@@ -188,6 +213,16 @@ class BusPhotoViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
         self.check_bus_permission(bus)
         serializer.save(bus=bus)
 
+    def perform_update(self, serializer) -> None:
+        """Only the bus owner or admin can update photos."""
+        self.check_object_bus_permission(self.get_object())
+        serializer.save()
+
+    def perform_destroy(self, instance) -> None:
+        """Only the bus owner or admin can delete photos."""
+        self.check_object_bus_permission(instance)
+        instance.delete()
+
 
 # ═══════════════════════════════════════════════════════════════
 #  BUS AMENITIES
@@ -211,6 +246,16 @@ class BusAmenityViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
         bus = self.get_bus()
         self.check_bus_permission(bus)
         serializer.save(bus=bus)
+
+    def perform_update(self, serializer) -> None:
+        """Only the bus owner or admin can update amenities."""
+        self.check_object_bus_permission(self.get_object())
+        serializer.save()
+
+    def perform_destroy(self, instance) -> None:
+        """Only the bus owner or admin can delete amenities."""
+        self.check_object_bus_permission(instance)
+        instance.delete()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -240,3 +285,13 @@ class AvailabilityBlockViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
         bus = self.get_bus()
         self.check_bus_permission(bus)
         serializer.save(bus=bus)
+
+    def perform_update(self, serializer) -> None:
+        """Only the bus owner or admin can update availability blocks."""
+        self.check_object_bus_permission(self.get_object())
+        serializer.save()
+
+    def perform_destroy(self, instance) -> None:
+        """Only the bus owner or admin can delete availability blocks."""
+        self.check_object_bus_permission(instance)
+        instance.delete()

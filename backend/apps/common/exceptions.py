@@ -31,11 +31,6 @@ def custom_exception_handler(exc, context):
     response = exception_handler(exc, context)
 
     if response is not None:
-        # Add error code to response if present
-        error_code = getattr(exc, 'code', None) or getattr(
-            exc, 'default_code', 'error',
-        )
-
         if isinstance(exc, NotAuthenticated):
             # Error Code: USR-VIEWS-AUTH-001
             # Message: Authentication required
@@ -47,14 +42,23 @@ def custom_exception_handler(exc, context):
             }
 
         elif isinstance(exc, AuthenticationFailed):
-            # Error Code: USR-VIEWS-AUTH-002
-            # Message: Invalid or expired token
-            # Cause: Token is malformed/expired
-            # Solution: Re-login to get new token
-            response.data = {
-                'error': 'Invalid or expired token.',
-                'code': 'USR-VIEWS-AUTH-002',
-            }
+            code = getattr(exc, 'code', None)
+            if isinstance(code, str) and '-' in code:
+                # Preserve explicit auth codes from custom auth backends
+                # such as USR-VIEWS-AUTH-003 for expired tokens.
+                response.data = {
+                    'error': str(exc.detail),
+                    'code': code,
+                }
+            else:
+                # Error Code: USR-VIEWS-AUTH-002
+                # Message: Invalid or expired token
+                # Cause: Token is malformed/expired
+                # Solution: Re-login to get new token
+                response.data = {
+                    'error': 'Invalid or expired token.',
+                    'code': 'USR-VIEWS-AUTH-002',
+                }
 
         elif isinstance(exc, PermissionDenied):
             code = getattr(exc, 'code', 'permission_denied')
@@ -67,9 +71,18 @@ def custom_exception_handler(exc, context):
 
     elif isinstance(exc, DjangoValidationError):
         # Handle Django ValidationError (from model clean())
+        # Supports single message, list of messages, and dict of field errors
         code = getattr(exc, 'code', 'validation_error')
+        if hasattr(exc, 'message_dict'):
+            # Field-specific errors: {'field': ['error1', 'error2']}
+            error_detail = exc.message_dict
+        elif hasattr(exc, 'messages'):
+            # List of messages
+            error_detail = exc.messages
+        else:
+            error_detail = str(getattr(exc, 'message', str(exc)))
         response = Response(
-            {'error': str(exc.message), 'code': code},
+            {'error': error_detail, 'code': code},
             status=status.HTTP_400_BAD_REQUEST,
         )
 

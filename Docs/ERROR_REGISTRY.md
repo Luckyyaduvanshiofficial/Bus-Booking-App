@@ -6,7 +6,7 @@
 
 ---
 
-## 📋 TABLE OF CONTENTS
+## TABLE OF CONTENTS
 
 1. [Error Code Format](#error-code-format)
 2. [Users App Errors (USR-*)](#users-app-errors)
@@ -76,8 +76,11 @@ NUMBER:
 |------|--------------|-------|----------|
 | USR-VIEWS-AUTH-001 | "Authentication required" | No auth token provided | Check Authorization header |
 | USR-VIEWS-AUTH-002 | "Invalid or expired token" | Token is malformed/expired | Re-login to get new token |
+| USR-VIEWS-AUTH-003 | "Token has expired. Please log in again" | Token older than TOKEN_EXPIRY_HOURS | Re-authenticate via OTP flow |
 | USR-VIEWS-PERM-001 | "Only operators can access this endpoint" | User role is not 'operator' | Check user.role in request |
 | USR-VIEWS-PERM-002 | "Only admins can approve operators" | User role is not 'admin' | Admin-only action attempted |
+| USR-VIEWS-PERM-003 | "Phone mismatch â€” can only register your own number" | Token belongs to different phone | Use token from verify_otp for same phone |
+| USR-VIEWS-PERM-004 | "Only operators or admins can access this endpoint" | User role is not 'operator' or 'admin' | Use an operator/admin account |
 | USR-VIEWS-NOTFOUND-001 | "User not found" | User ID doesn't exist | Check user_id in request |
 | USR-VIEWS-VAL-001 | "Password must be at least 8 characters" | Weak password | Enforce password requirements |
 
@@ -87,6 +90,7 @@ NUMBER:
 |------|--------------|-------|----------|
 | USR-SERV-AUTH-001 | "Invalid phone/OTP combination" | OTP verification failed | Check Supabase Auth logs |
 | USR-SERV-AUTH-002 | "OTP expired. Please request new one" | OTP timeout exceeded | Request new OTP |
+| USR-SERV-API-001 | "Failed to send OTP. Please try again later." | Supabase OTP API call failed | Check Supabase credentials/network |
 | USR-SERV-CONFLICT-001 | "Operator already verified" | Attempting to re-verify | Check operator.is_verified status |
 | USR-SERV-VAL-001 | "Profile incomplete. Add city and address" | Required fields missing | Complete profile before operator registration |
 
@@ -164,9 +168,11 @@ NUMBER:
 |------|--------------|-------|----------|
 | BOK-VIEWS-PERM-001 | "Only customers can create bookings" | Non-customer tried to book | Check user.role == 'customer' |
 | BOK-VIEWS-PERM-002 | "Only operator can accept/reject bookings" | Customer tried operator action | Check user.role == 'operator' |
-| BOK-VIEWS-PERM-003 | "You can only view your own bookings" | Accessing another user's booking | Check booking ownership |
+| BOK-VIEWS-PERM-003 | "Not authorized to cancel this booking" | User is not the booking customer, operator, or admin | Only booking parties or admin can cancel |
+| BOK-VIEWS-PERM-004 | "Not authorized to respond to this booking" | Operator tried to respond to another operator's booking | Only the booking's operator or admin can respond |
+| BOK-VIEWS-PERM-005 | "Not authorized to complete this booking" | Operator tried to complete another operator's booking | Only the booking's operator or admin can complete |
 | BOK-VIEWS-NOTFOUND-001 | "Booking not found" | Invalid booking_id | Check booking exists |
-| BOK-VIEWS-VAL-001 | "Booking must be in pending status to cancel" | Wrong status transition | Check booking.status |
+| BOK-VIEWS-VAL-001 | "Booking cannot be cancelled in current status" | Wrong status transition | Check booking.status |
 | BOK-VIEWS-CONFLICT-001 | "Bus already booked for this date" | Double booking attempt | Bus not available |
 
 ### BOK-SERV-* (apps/bookings/services.py)
@@ -174,12 +180,19 @@ NUMBER:
 | Code | Error Message | Cause | Solution |
 |------|--------------|-------|----------|
 | BOK-SERV-CONFLICT-001 | "Bus not available on selected date" | Availability block exists | Choose different date |
-| BOK-SERV-CONFLICT-002 | "Operator has insufficient wallet balance" | Commission can't be deducted | Operator must top up wallet |
+| BOK-SERV-CONFLICT-002 | "Cannot cancel this booking" | Booking is already completed/cancelled | Cancel only pending/confirmed bookings |
 | BOK-SERV-DB-001 | "Failed to create booking and block availability" | Transaction rollback | Check database constraints |
 | BOK-SERV-DB-002 | "Race condition detected. Please retry" | Concurrent booking attempt | Retry booking |
-| BOK-SERV-VAL-001 | "Pricing calculation failed" | Invalid pricing data | Check BusPricing model |
+| BOK-SERV-VAL-001 | "Booking is not pending" | Operator tried responding to non-pending booking | Only pending bookings can be responded to |
+| BOK-SERV-PERM-001 | "You can only pay for your own bookings" | Customer does not own booking | Use the booking owner's account |
+| BOK-SERV-VAL-002 | "Invalid status for respond. Use confirmed or rejected." | Unsupported respond status | Use status='confirmed' or status='rejected' |
+| BOK-SERV-VAL-003 | "Invalid coupon code" | Coupon code not found | Verify coupon code and retry |
+| BOK-SERV-VAL-004 | "Coupon is expired or exhausted" | Coupon is inactive or usage exhausted | Use a valid coupon |
+| BOK-SERV-VAL-005 | "Minimum booking amount is required for coupon" | Booking amount is below coupon minimum | Increase booking amount or use different coupon |
+| BOK-SERV-VAL-006 | "You have already used this coupon" | Per-user coupon usage limit reached | Use a different coupon |
 | BOK-SERV-API-001 | "Failed to send booking confirmation SMS" | SMS API error | Check MSG91 logs, retry |
-| BOK-SERV-CONFLICT-003 | "Cannot reveal contact before 2 hours of trip" | Early contact reveal attempt | Wait until 2 hours before pickup |
+| BOK-SERV-CONFLICT-003 | "Only confirmed bookings can be completed" | Booking is not confirmed | Confirm booking before completion |
+| BOK-SERV-DB-003 | "Failed to record coupon usage" | CouponUsage constraint violation | Check unique_together constraint |
 
 ### BOK-SERIAL-* (apps/bookings/serializers.py)
 
@@ -206,7 +219,7 @@ NUMBER:
 | PAY-MODELS-CONFLICT-001 | "Payment already processed for this booking" | Duplicate payment attempt | Check payment.status |
 | PAY-MODELS-CONFLICT-002 | "Cannot refund unpaid booking" | Refund on pending payment | Check payment status first |
 
-### PAY-VIEWS-* (apps/payments/views.py)
+### PAY-VIEWS-* (apps/bookings/views.py)
 
 | Code | Error Message | Cause | Solution |
 |------|--------------|-------|----------|
@@ -214,6 +227,8 @@ NUMBER:
 | PAY-VIEWS-NOTFOUND-001 | "Payment not found" | Invalid payment_id | Check payment exists |
 | PAY-VIEWS-VAL-001 | "Cashfree order creation failed" | API error | Check Cashfree logs |
 | PAY-VIEWS-VAL-002 | "Booking must be confirmed before payment" | Booking status is not 'confirmed' | Wait for operator to confirm the booking first |
+| PAY-VIEWS-VAL-003 | "Unsupported payment method" | payment_method value is not allowed | Use one of: upi, card, netbanking, wallet |
+| PAY-VIEWS-VAL-004 | "Invalid amount" | Amount is not a valid decimal | Pass a numeric amount value |
 | PAY-VIEWS-CONFLICT-001 | "Booking already paid" | Duplicate payment | Check booking.payment_status |
 
 ### PAY-SERV-* (apps/payments/services.py)
@@ -225,7 +240,17 @@ NUMBER:
 | PAY-SERV-CONFLICT-001 | "Payment status mismatch" | Status sync issue | Verify with Cashfree API |
 | PAY-SERV-DB-001 | "Failed to update payment status" | Database error | Check transaction logs |
 | PAY-SERV-CONFIG-001 | "Cashfree credentials missing" | Env vars not set | Set CASHFREE_APP_ID, CASHFREE_SECRET_KEY |
-| PAY-SERV-VAL-001 | "Refund amount exceeds original payment" | Invalid refund amount | Check refund calculation |
+| PAY-SERV-VAL-001 | "Payment amount mismatch" | Actual paid != expected amount | Investigate in Cashfree dashboard â€” possible fraud |
+| PAY-SERV-CONFLICT-002 | "Payment already captured" | Duplicate webhook or confirm call | No action needed â€” payment is already processed |
+
+### PAY-WEBHOOK-* (apps/bookings/views.py â€“ Cashfree webhook)
+
+| Code | Error Message | Cause | Solution |
+|------|--------------|-------|----------|
+| PAY-WEBHOOK-PERM-001 | "Invalid webhook signature" | Request not from Cashfree or secret mismatch | Verify CASHFREE_SECRET_KEY matches dashboard |
+| PAY-WEBHOOK-NOTFOUND-001 | "Payment not found" | order_id from webhook doesn't match any Payment | Check Cashfree dashboard for correct order_id |
+| PAY-WEBHOOK-CONFIG-001 | "CASHFREE_SECRET_KEY not configured" | Missing webhook secret | Set CASHFREE_SECRET_KEY in .env |
+| PAY-WEBHOOK-VAL-001 | "Invalid payment amount" | payment_amount could not be parsed | Ensure webhook sends numeric payment_amount |
 
 ---
 
@@ -248,6 +273,8 @@ NUMBER:
 | REV-VIEWS-PERM-002 | "Only admins can moderate reviews" | Non-admin moderation attempt | Admin-only action |
 | REV-VIEWS-NOTFOUND-001 | "Review not found" | Invalid review_id | Check review exists |
 | REV-VIEWS-VAL-001 | "Cannot review cancelled booking" | Booking was cancelled | Only completed bookings reviewable |
+| REV-VIEWS-VAL-002 | "bus_id/operator_id query parameter required" | Missing required query parameter | Add ?bus_id=<uuid> or ?operator_id=<uuid> |
+| REV-VIEWS-VAL-003 | "No completed booking with this operator" | User never completed a trip with operator | Only review operators you have booked with |
 
 ### REV-SERV-* (apps/reviews/services.py)
 
@@ -408,16 +435,16 @@ When adding new code to project:
 
 ## ERROR CODE STATISTICS
 
-**Total Error Codes Defined:** 121
+**Total Error Codes Defined:** 131
 
 **By App:**
-- Users: 18 codes (15 original + 3 SERIAL)
+- Users: 21 codes (15 original + 3 SERIAL + 3 new)
 - Buses: 21 codes (17 original + 4 SERIAL)
-- Bookings: 26 codes (19 original + 7 SERIAL)
-- Payments: 15 codes
-- Reviews: 15 codes (11 original + 4 SERIAL)
+- Bookings: 27 codes (19 original + 7 SERIAL + 1 new)
+- Payments: 18 codes (15 original + 3 WEBHOOK)
+- Reviews: 17 codes (11 original + 4 SERIAL + 2 new)
 - Documents: 14 codes
-- Common: 12 codes
+- Common: 13 codes (12 original + 1 AUTH)
 
 **By Type:**
 - VAL (Validation): 35%

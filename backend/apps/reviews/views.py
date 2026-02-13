@@ -111,7 +111,11 @@ class BusReviewViewSet(viewsets.ModelViewSet):
 
 
 class OperatorReviewViewSet(viewsets.ModelViewSet):
-    """Operator review CRUD."""
+    """Operator review CRUD.
+
+    Only users who have completed a booking with the operator
+    can leave a review, preventing review spam.
+    """
 
     serializer_class = OperatorReviewSerializer
 
@@ -128,7 +132,28 @@ class OperatorReviewViewSet(viewsets.ModelViewSet):
         return qs.filter(is_approved=True)
 
     def perform_create(self, serializer) -> None:
-        """Attach the reviewer from the authenticated user."""
+        """Attach the reviewer and validate they have a completed booking with this operator."""
+        operator = serializer.validated_data.get('operator')
+
+        # Ensure reviewer has at least one completed booking with this operator
+        from apps.bookings.models import Booking
+        has_completed_booking = Booking.objects.filter(
+            customer=self.request.user,
+            operator=operator,
+            status='completed',
+        ).exists()
+
+        if not has_completed_booking:
+            from rest_framework.exceptions import ValidationError
+            # Error Code: REV-VIEWS-VAL-003
+            # Message: No completed booking with this operator
+            # Cause: User has never completed a trip with this operator
+            # Solution: Only review operators you have booked with
+            raise ValidationError(
+                'You can only review operators you have completed a booking with.',
+                code='REV-VIEWS-VAL-003',
+            )
+
         serializer.save(reviewer=self.request.user)
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
@@ -154,4 +179,10 @@ class OperatorReviewViewSet(viewsets.ModelViewSet):
         qs = OperatorReview.objects.filter(
             operator_id=operator_id, is_approved=True,
         ).select_related('reviewer', 'operator')
+        # Paginate results to prevent OOM on large result sets
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            return self.get_paginated_response(
+                OperatorReviewSerializer(page, many=True).data,
+            )
         return Response(OperatorReviewSerializer(qs, many=True).data)

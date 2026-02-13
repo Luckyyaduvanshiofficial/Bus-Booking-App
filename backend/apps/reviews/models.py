@@ -117,18 +117,29 @@ class BusReview(models.Model):
                 code='REV-MODELS-CONFLICT-001',
             )
 
-    def save(self, *args, validate: bool = False, **kwargs) -> None:
-        """Optionally validate, save, and update bus/operator ratings.
+    def save(self, *args, **kwargs) -> None:
+        """Always validate before saving.
 
-        Args:
-            validate: If True, run full_clean() before saving. Defaults to
-                False to avoid breaking bulk/partial operations.
+        Only recalculate bus/operator ratings when:
+        - Creating a new review (no pk yet)
+        - The is_approved flag has changed (admin moderation)
+        This avoids 4 extra queries on every save (e.g., flagging).
         """
-        if validate:
-            self.full_clean()
+        is_new = self.pk is None
+        approval_changed = False
+        if not is_new:
+            try:
+                old = BusReview.objects.only('is_approved').get(pk=self.pk)
+                approval_changed = old.is_approved != self.is_approved
+            except BusReview.DoesNotExist:
+                is_new = True
+
+        self.full_clean()
         super().save(*args, **kwargs)
-        self._update_bus_ratings()
-        self._update_operator_ratings()
+
+        if is_new or approval_changed:
+            self._update_bus_ratings()
+            self._update_operator_ratings()
 
     def _update_bus_ratings(self):
         """Recalculate bus average rating and count."""

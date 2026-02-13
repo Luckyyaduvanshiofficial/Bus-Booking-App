@@ -63,14 +63,25 @@ class BusListSerializer(serializers.ModelSerializer):
         ]
 
     def get_primary_photo(self, obj):
-        photo = obj.photos.filter(is_primary=True).first()
-        if photo:
-            return photo.photo_url
-        photo = obj.photos.order_by('display_order').first()
-        return photo.photo_url if photo else None
+        # Uses prefetch_related('photos') from get_queryset
+        # to avoid N+1 — iterating the prefetched set in Python
+        photos = getattr(obj, '_prefetched_objects_cache', {}).get('photos')
+        if photos is None:
+            photos = obj.photos.all()
+        for photo in photos:
+            if photo.is_primary:
+                return photo.photo_url
+        # Fall back to first photo by display_order
+        sorted_photos = sorted(photos, key=lambda p: p.display_order or 0)
+        return sorted_photos[0].photo_url if sorted_photos else None
 
     def get_amenities(self, obj):
-        return list(obj.amenities.values_list('amenity', flat=True))
+        # Uses prefetch_related('amenities') from get_queryset
+        # to avoid N+1 — iterating the prefetched set in Python
+        amenities = getattr(obj, '_prefetched_objects_cache', {}).get('amenities')
+        if amenities is None:
+            amenities = obj.amenities.all()
+        return [a.amenity for a in amenities]
 
 
 class BusDetailSerializer(serializers.ModelSerializer):
@@ -103,8 +114,18 @@ class BusDetailSerializer(serializers.ModelSerializer):
         ]
 
     def get_blocked_dates(self, obj):
+        # Only return future blocked dates — past dates are irrelevant to customers
+        from django.utils import timezone
+        today = timezone.now().date()
+        prefetched = getattr(obj, '_prefetched_objects_cache', {}).get(
+            'availability_blocks',
+        )
+        if prefetched is not None:
+            return [block.blocked_date for block in prefetched if block.blocked_date >= today]
         return list(
-            obj.availability_blocks.values_list('blocked_date', flat=True)
+            obj.availability_blocks.filter(
+                blocked_date__gte=today,
+            ).values_list('blocked_date', flat=True)
         )
 
 

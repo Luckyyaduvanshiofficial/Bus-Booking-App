@@ -21,8 +21,12 @@ SECRET_KEY = config(
     default='django-insecure-dev-key-change-in-production'
 )
 
+# Runtime environment
+ENVIRONMENT = config('ENVIRONMENT', default='development').strip().lower()
+IS_PRODUCTION = ENVIRONMENT in ('production', 'prod')
+
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
@@ -95,8 +99,11 @@ DATABASES = {
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'OPTIONS': {
-            'sslmode': 'require',
+            'sslmode': config('DB_SSLMODE', default='prefer'),
         },
+        # Reuse DB connections for 10 minutes to avoid opening a new
+        # PostgreSQL connection on every request (Supabase has connection limits)
+        'CONN_MAX_AGE': 600,
     }
 }
 
@@ -139,7 +146,8 @@ AUTH_USER_MODEL = 'users.CustomUser'
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        # Expiring token auth — tokens auto-expire after TOKEN_EXPIRY_HOURS
+        'apps.common.authentication.ExpiringTokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -153,6 +161,15 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'EXCEPTION_HANDLER': 'apps.common.exceptions.custom_exception_handler',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/minute',
+        'user': '120/minute',
+        'otp': '5/minute',
+    },
 }
 
 # CORS Configuration
@@ -228,11 +245,67 @@ CACHES = {
 }
 
 # Security Settings
-SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
-SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
-CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=False, cast=bool)
+SECURE_SSL_REDIRECT = config(
+    'SECURE_SSL_REDIRECT',
+    default=IS_PRODUCTION,
+    cast=bool,
+)
+SESSION_COOKIE_SECURE = config(
+    'SESSION_COOKIE_SECURE',
+    default=IS_PRODUCTION,
+    cast=bool,
+)
+CSRF_COOKIE_SECURE = config(
+    'CSRF_COOKIE_SECURE',
+    default=IS_PRODUCTION,
+    cast=bool,
+)
 CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_HTTPONLY = True
+# HSTS — enforce HTTPS in production (browsers cache for 1 year)
+SECURE_HSTS_SECONDS = config(
+    'SECURE_HSTS_SECONDS',
+    default=31536000 if IS_PRODUCTION else 0,
+    cast=int,
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config(
+    'SECURE_HSTS_INCLUDE_SUBDOMAINS',
+    default=IS_PRODUCTION,
+    cast=bool,
+)
+SECURE_HSTS_PRELOAD = config(
+    'SECURE_HSTS_PRELOAD',
+    default=IS_PRODUCTION,
+    cast=bool,
+)
+# Content security
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = config(
+    'SECURE_REFERRER_POLICY',
+    default='strict-origin-when-cross-origin',
+)
+
+if IS_PRODUCTION:
+    insecure_flags = []
+    if DEBUG:
+        insecure_flags.append('DEBUG must be False')
+    if not SECURE_SSL_REDIRECT:
+        insecure_flags.append('SECURE_SSL_REDIRECT must be True')
+    if SECURE_HSTS_SECONDS <= 0:
+        insecure_flags.append('SECURE_HSTS_SECONDS must be > 0')
+    if not SESSION_COOKIE_SECURE:
+        insecure_flags.append('SESSION_COOKIE_SECURE must be True')
+    if not CSRF_COOKIE_SECURE:
+        insecure_flags.append('CSRF_COOKIE_SECURE must be True')
+    if insecure_flags:
+        raise RuntimeError(
+            'Production security misconfiguration: ' + '; '.join(insecure_flags),
+        )
+
+# Token expiry (hours) — tokens older than this are rejected and deleted.
+# Default: 168 hours (7 days). Set to 0 to disable expiry.
+TOKEN_EXPIRY_HOURS = config('TOKEN_EXPIRY_HOURS', default=168, cast=int)
 
 # Logging
 LOGGING = {

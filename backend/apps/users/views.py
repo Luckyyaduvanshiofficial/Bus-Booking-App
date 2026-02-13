@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from django.db.models import QuerySet
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes as perm_classes
+from rest_framework.decorators import action, api_view, permission_classes as perm_classes, throttle_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
 from .models import CustomUser, Document, Notification
 from .permissions import IsAdmin, IsOperator, IsOperatorOrAdmin
@@ -18,6 +20,7 @@ from .serializers import (
     DocumentUploadSerializer,
     DocumentVerifySerializer,
     NotificationSerializer,
+    OperatorPublicSerializer,
     OperatorRegistrationSerializer,
     OperatorSerializer,
     OTPRequestSerializer,
@@ -29,6 +32,11 @@ from .serializers import (
 from .services import AuthService, DocumentService, OperatorService, UserService
 
 
+class OTPThrottle(ScopedRateThrottle):
+    """Rate limiter for OTP endpoints — prevents SMS abuse."""
+    scope = 'otp'
+
+
 # ═══════════════════════════════════════════════════════════════
 #  AUTH  –  Supabase OTP flow
 # ═══════════════════════════════════════════════════════════════
@@ -36,6 +44,7 @@ from .services import AuthService, DocumentService, OperatorService, UserService
 
 @api_view(['POST'])
 @perm_classes([AllowAny])
+@throttle_classes([OTPThrottle])
 def send_otp(request) -> Response:
     """Send OTP to phone number via Supabase Auth."""
     serializer = OTPRequestSerializer(data=request.data)
@@ -47,6 +56,7 @@ def send_otp(request) -> Response:
 
 @api_view(['POST'])
 @perm_classes([AllowAny])
+@throttle_classes([OTPThrottle])
 def verify_otp(request) -> Response:
     """Verify OTP and return auth token."""
     serializer = OTPVerifySerializer(data=request.data)
@@ -60,11 +70,33 @@ def verify_otp(request) -> Response:
 
 
 @api_view(['POST'])
-@perm_classes([AllowAny])
+@perm_classes([IsAuthenticated])
 def register(request) -> Response:
-    """Register a new user (after OTP verification)."""
+    """Complete user registration (requires auth token from verify_otp).
+
+    This endpoint requires the DRF token returned by verify_otp, ensuring
+    the user has actually completed OTP verification before they can set
+    their profile fields (name, email, role). Without this guard, anyone
+    could call register directly with any phone number and create/update
+    user records without proving phone ownership.
+
+    Error Codes:
+        USR-VIEWS-AUTH-001: Authentication required (no token)
+    """
     serializer = RegisterSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
+
+    # Only allow the authenticated user to register their own phone
+    if serializer.validated_data['phone'] != request.user.phone:
+        # Error Code: USR-VIEWS-PERM-003
+        # Message: Phone mismatch — can only register your own number
+        # Cause: Token belongs to a different phone number
+        # Solution: Use the token from verify_otp for the same phone
+        return Response(
+            {'error': 'Phone number does not match authenticated user',
+             'code': 'USR-VIEWS-PERM-003'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     result = AuthService.register_user(validated_data=serializer.validated_data)
     http_status = (
@@ -86,7 +118,9 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
 
     def get_permissions(self):
-        if self.action in ('list', 'retrieve', 'destroy'):
+        # Admin-only for list, retrieve, update, partial_update, destroy.
+        # Any authenticated user modifying a user record (except via /me/) must be admin.
+        if self.action in ('list', 'retrieve', 'destroy', 'update', 'partial_update'):
             return [IsAdmin()]
         return [IsAuthenticated()]
 
@@ -140,7 +174,16 @@ class OperatorViewSet(viewsets.ModelViewSet):
     """Operator management + dashboard."""
 
     queryset = CustomUser.objects.filter(role='operator')
-    serializer_class = OperatorSerializer
+
+    def get_serializer_class(self):
+        """Use public serializer for list/retrieve — hide financial data from non-admins."""
+        if self.action in ('list', 'retrieve'):
+            if not self.request.user.is_authenticated or self.request.user.role not in ('admin', 'operator'):
+                return OperatorPublicSerializer
+            # Operators can see their own full profile via my_profile
+            if self.request.user.role == 'operator' and self.action == 'retrieve':
+                return OperatorPublicSerializer
+        return OperatorSerializer
 
     def get_permissions(self):
         if self.action == 'list':
@@ -148,6 +191,12 @@ class OperatorViewSet(viewsets.ModelViewSet):
         if self.action in ('register_as_operator', 'my_profile'):
             return [IsAuthenticated()]
         return [IsOperatorOrAdmin()]
+
+    def get_queryset(self) -> QuerySet:
+        """Optimized query with prefetch to avoid N+1 on documents."""
+        return CustomUser.objects.filter(
+            role='operator',
+        ).prefetch_related('documents')
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def register_as_operator(self, request) -> Response:
@@ -203,13 +252,18 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
         Validates that operator uploads their own documents.
         """
+        if self.request.user.role not in ('operator', 'admin'):
+            raise PermissionDenied(
+                'Only operators can upload documents.',
+                code='DOC-VIEWS-PERM-001',
+            )
+
         # Error Code: DOC-VIEWS-PERM-001
         # Message: Only bus operator can upload documents
         # Cause: Unauthorized upload
         # Solution: Check bus ownership
         bus = serializer.validated_data.get('bus')
         if bus and bus.operator != self.request.user and self.request.user.role != 'admin':
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied(
                 'You can only upload documents for your own buses.',
                 code='DOC-VIEWS-PERM-001',

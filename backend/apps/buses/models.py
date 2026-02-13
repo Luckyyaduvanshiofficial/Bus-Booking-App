@@ -157,8 +157,14 @@ class Bus(models.Model):
             )
 
     def save(self, *args, **kwargs) -> None:
-        """Validate and save the bus."""
-        self.full_clean()
+        """Validate and save the bus.
+
+        Skips full_clean() when update_fields is provided (e.g.,
+        rating updates) to avoid validating ALL fields when only
+        specific fields are being updated.
+        """
+        if not kwargs.get('update_fields'):
+            self.full_clean()
         super().save(*args, **kwargs)
 
     # ── Business methods ──

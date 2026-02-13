@@ -24,15 +24,21 @@ class IsCustomer(BasePermission):
 
 
 class IsOperator(BasePermission):
-    """Allow access only to operators."""
+    """Allow access only to verified operators.
 
-    message = 'Only operators can access this endpoint. [USR-VIEWS-PERM-003]'
+    Unverified operators (verification_status != 'approved') are blocked
+    from operator-only endpoints like creating buses and viewing dashboard.
+    They must complete verification via the admin before accessing these.
+    """
+
+    message = 'Only verified operators can access this endpoint. [USR-VIEWS-PERM-003]'
 
     def has_permission(self, request, view) -> bool:
         return (
             request.user
             and request.user.is_authenticated
             and request.user.role == CustomUser.Role.OPERATOR
+            and request.user.is_verified
         )
 
 

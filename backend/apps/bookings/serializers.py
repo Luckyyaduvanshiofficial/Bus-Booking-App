@@ -14,7 +14,11 @@ from .models import Booking, BookingHistory, Coupon, CouponUsage, Payment
 
 
 class PaymentSerializer(serializers.ModelSerializer):
-    """Read-only payment representation."""
+    """Read-only payment representation.
+
+    Hides raw Cashfree metadata from non-admin users to prevent
+    exposure of sensitive payment gateway internals.
+    """
 
     class Meta:
         model = Payment
@@ -28,6 +32,33 @@ class PaymentSerializer(serializers.ModelSerializer):
             'id', 'cf_order_id', 'cf_payment_id',
             'status', 'created_at', 'updated_at',
         ]
+
+    def to_representation(self, instance):
+        """Strip raw Cashfree metadata for non-admin users."""
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'user') or request.user.role != 'admin':
+            data.pop('metadata', None)
+        return data
+
+
+class PaymentInitiateSerializer(serializers.Serializer):
+    """Validate payload for payment initiation endpoint."""
+
+    booking_id = serializers.UUIDField()
+    payment_method = serializers.CharField(
+        required=False,
+        default=Payment.PaymentMethod.UPI,
+    )
+
+    def validate_payment_method(self, value: str) -> str:
+        allowed = {choice[0] for choice in Payment.PaymentMethod.choices}
+        if value not in allowed:
+            raise serializers.ValidationError(
+                'Unsupported payment method.',
+                code='PAY-VIEWS-VAL-003',
+            )
+        return value
 
 
 # ── Booking ──────────────────────────────────────────────────
@@ -53,8 +84,15 @@ class BookingListSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_bus_photo(self, obj):
-        photo = obj.bus.photos.filter(is_primary=True).first()
-        return photo.photo_url if photo else None
+        # Uses prefetch_related('bus__photos') from get_queryset
+        # to avoid N+1 — iterating the prefetched set in Python
+        photos = getattr(obj.bus, '_prefetched_objects_cache', {}).get('photos')
+        if photos is None:
+            photos = obj.bus.photos.all()
+        for photo in photos:
+            if photo.is_primary:
+                return photo.photo_url
+        return None
 
 
 class BookingDetailSerializer(serializers.ModelSerializer):
@@ -106,7 +144,29 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
 
+    def to_representation(self, instance):
+        """Hide commission fields from customers — only visible to operator/admin."""
+        data = super().to_representation(instance)
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.role == 'customer':
+            data.pop('commission_rate', None)
+            data.pop('commission_amount', None)
+            data.pop('operator_payout', None)
+            # Hide customer_phone for pending bookings (before confirmation)
+            if instance.status == 'pending':
+                data.pop('customer_phone', None)
+        return data
+
     def get_history(self, obj):
+        prefetched = getattr(obj, '_prefetched_objects_cache', {}).get('history')
+        if prefetched is not None:
+            history_items = sorted(
+                prefetched,
+                key=lambda item: item.created_at,
+                reverse=True,
+            )
+            return BookingHistorySerializer(history_items, many=True).data
+
         qs = obj.history.order_by('-created_at')
         return BookingHistorySerializer(qs, many=True).data
 

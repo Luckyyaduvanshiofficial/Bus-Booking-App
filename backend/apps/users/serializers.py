@@ -49,7 +49,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 
 class OperatorSerializer(serializers.ModelSerializer):
-    """Detailed operator representation."""
+    """Full operator representation — ONLY for admin or the operator themselves."""
     documents = serializers.SerializerMethodField()
 
     class Meta:
@@ -75,9 +75,35 @@ class OperatorSerializer(serializers.ModelSerializer):
     def get_documents(self, obj):
         return DocumentSerializer(obj.documents.all(), many=True).data
 
+    def to_representation(self, instance):
+        """Mask bank_account — show only last 4 digits."""
+        data = super().to_representation(instance)
+        raw = data.get('bank_account') or ''
+        if len(raw) > 4:
+            data['bank_account'] = '****' + raw[-4:]
+        return data
+
+
+class OperatorPublicSerializer(serializers.ModelSerializer):
+    """Public-safe operator representation — no financial or PII fields."""
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            'id', 'business_name', 'business_type',
+            'city', 'is_verified',
+            'rating_avg', 'rating_count',
+            'total_buses', 'total_bookings',
+        ]
+        read_only_fields = fields
+
 
 class OperatorRegistrationSerializer(serializers.ModelSerializer):
-    """Used during operator on-boarding (POST only)."""
+    """Used during operator on-boarding (POST only).
+
+    Phone is read-only because the user's phone is already set from
+    OTP verification and must not be changed without re-verification.
+    """
 
     class Meta:
         model = CustomUser
@@ -88,6 +114,7 @@ class OperatorRegistrationSerializer(serializers.ModelSerializer):
             'bank_account', 'bank_ifsc', 'bank_name',
             'address', 'city',
         ]
+        read_only_fields = ['phone']
 
 
 # ── Document Serializers ─────────────────────────────────────
@@ -151,13 +178,19 @@ class OTPVerifySerializer(serializers.Serializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    """Create a new user after OTP verification."""
+    """Create a new user after OTP verification.
+
+    Role is restricted to 'customer' during registration.
+    Users who want to become operators must use the
+    register_as_operator endpoint after creating a customer account.
+    This ensures operators go through the verification flow.
+    """
 
     class Meta:
         model = CustomUser
         fields = ['phone', 'name', 'email', 'role']
         extra_kwargs = {
-            'role': {'required': True},
+            'role': {'required': False, 'default': 'customer'},
         }
 
     def validate_phone(self, value: str) -> str:
@@ -184,15 +217,20 @@ class RegisterSerializer(serializers.ModelSerializer):
         return cleaned
 
     def validate_role(self, value: str) -> str:
-        """Only customer and operator roles are allowed during registration."""
-        allowed = {CustomUser.Role.CUSTOMER.value, CustomUser.Role.OPERATOR.value}
-        if value not in allowed:
+        """Only customer role is allowed during registration.
+
+        Operators must use the register_as_operator endpoint which
+        collects business details and sets verification_status='pending'.
+        This prevents unverified users from self-assigning operator role.
+        """
+        if value != CustomUser.Role.CUSTOMER.value:
             # Error Code: USR-SERIAL-VAL-003
-            # Message: Invalid registration role
-            # Cause: Role is not 'customer' or 'operator'
-            # Solution: Set role to 'customer' or 'operator' during registration
+            # Message: Registration role must be 'customer'
+            # Cause: User tried to register as operator directly
+            # Solution: Register as customer, then use register_as_operator endpoint
             raise serializers.ValidationError(
-                'Role must be customer or operator.',
+                "Register as customer first. Use the operator registration "
+                "endpoint to become an operator.",
                 code='USR-SERIAL-VAL-003',
             )
         return value

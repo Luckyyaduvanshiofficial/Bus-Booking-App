@@ -7,11 +7,12 @@ Raises ValidationError for invalid data.
 from __future__ import annotations
 
 import logging
+import time
 from decimal import Decimal
 from typing import Optional
 
-from django.db import transaction
-from django.db.models import F
+from django.db import IntegrityError, transaction
+from django.db.models import F, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -40,6 +41,9 @@ class BookingService:
     ) -> Booking:
         """Create a new booking with pricing calculation and date blocking.
 
+        Acquires a row-level lock on the bus via select_for_update() to
+        prevent double-booking race conditions.
+
         Args:
             customer: The authenticated customer placing the booking.
             validated_data: Serializer-validated booking data.
@@ -48,19 +52,42 @@ class BookingService:
             The newly created Booking instance.
 
         Raises:
-            ValidationError: If the bus is not available on the selected date.
+            ValidationError (BOK-SERV-CONFLICT-001): If the bus is not
+                available on the selected date.
         """
-        bus: Bus = validated_data['bus']
         pickup_date = validated_data['pickup_date']
 
-        # ── Availability check ──
-        if not bus.is_available_on(pickup_date):
+        # Step 1: Acquire row-level lock on the bus to serialize concurrent bookings.
+        # SELECT ... FOR UPDATE prevents other transactions from reading this row
+        # until we commit, eliminating the race condition window between the
+        # availability check and the AvailabilityBlock creation.
+        bus: Bus = Bus.objects.select_for_update().get(
+            id=validated_data['bus'].id,
+        )
+
+        # Step 2: Availability check (now safe under lock)
+        # For multi-day/round-trip, check ALL dates in the range
+        from datetime import timedelta
+        return_date = validated_data.get('return_date')
+        dates_to_check = [pickup_date]
+        if return_date and return_date > pickup_date:
+            current = pickup_date + timedelta(days=1)
+            while current <= return_date:
+                dates_to_check.append(current)
+                current += timedelta(days=1)
+
+        blocked = AvailabilityBlock.objects.filter(
+            bus=bus,
+            blocked_date__in=dates_to_check,
+        ).values_list('blocked_date', flat=True)
+        if blocked:
+            blocked_str = ', '.join(str(d) for d in blocked)
             # Error Code: BOK-SERV-CONFLICT-001
-            # Message: Bus not available on selected date
-            # Cause: Another booking or manual block exists for this date
-            # Solution: Choose a different date or a different bus
+            # Message: Bus not available on selected date(s)
+            # Cause: Another booking or manual block exists for these dates
+            # Solution: Choose different dates or a different bus
             raise ValidationError(
-                'Bus is not available on the selected date.',
+                f'Bus is not available on: {blocked_str}.',
                 code='BOK-SERV-CONFLICT-001',
             )
 
@@ -85,13 +112,40 @@ class BookingService:
         booking.full_clean()
         booking.save()
 
-        # ── Block date ──
-        AvailabilityBlock.objects.create(
-            bus=bus,
-            blocked_date=pickup_date,
-            block_reason='booked_platform',
-            booking=booking,
-        )
+        # ── Block dates ──
+        # For round-trip or multi-day bookings, block ALL dates between
+        # pickup and return to prevent double-booking on intermediate days
+        if return_date and return_date > pickup_date:
+            current_date = pickup_date
+            while current_date <= return_date:
+                _, created = AvailabilityBlock.objects.get_or_create(
+                    bus=bus,
+                    blocked_date=current_date,
+                    defaults={
+                        'block_reason': 'booked_platform',
+                        'booking': booking,
+                    },
+                )
+                if not created:
+                    raise ValidationError(
+                        'Bus is not available on selected date.',
+                        code='BOK-SERV-CONFLICT-001',
+                    )
+                current_date += timedelta(days=1)
+        else:
+            _, created = AvailabilityBlock.objects.get_or_create(
+                bus=bus,
+                blocked_date=pickup_date,
+                defaults={
+                    'block_reason': 'booked_platform',
+                    'booking': booking,
+                },
+            )
+            if not created:
+                raise ValidationError(
+                    'Bus is not available on selected date.',
+                    code='BOK-SERV-CONFLICT-001',
+                )
 
         # ── History entry ──
         BookingHistory.objects.create(
@@ -169,6 +223,8 @@ class BookingService:
         Raises:
             ValidationError: If the booking is not pending or status is invalid.
         """
+        booking = Booking.objects.select_for_update().get(pk=booking.pk)
+
         if booking.status != 'pending':
             # Error Code: BOK-SERV-VAL-001
             # Message: Booking is not in pending status
@@ -222,6 +278,11 @@ class BookingService:
     ) -> Booking:
         """Cancel a booking and free blocked dates.
 
+        Sets the correct cancellation status based on who cancelled:
+        - Customer → cancelled_by_customer
+        - Operator → cancelled_by_operator
+        - Admin → cancelled_by_operator (administrative cancellation)
+
         Args:
             booking: The booking to cancel.
             reason: Cancellation reason text.
@@ -231,8 +292,10 @@ class BookingService:
             The updated Booking instance.
 
         Raises:
-            ValidationError: If the booking cannot be cancelled.
+            ValidationError (BOK-SERV-CONFLICT-002): If the booking cannot be cancelled.
         """
+        booking = Booking.objects.select_for_update().get(pk=booking.pk)
+
         non_cancellable = ('completed', 'cancelled_by_customer', 'cancelled_by_operator')
         if booking.status in non_cancellable:
             # Error Code: BOK-SERV-CONFLICT-002
@@ -245,7 +308,14 @@ class BookingService:
             )
 
         old_status = booking.status
-        booking.status = 'cancelled_by_customer'
+
+        # Determine correct cancellation status based on who is cancelling
+        if cancelled_by.role in ('operator', 'admin'):
+            new_status = 'cancelled_by_operator'
+        else:
+            new_status = 'cancelled_by_customer'
+
+        booking.status = new_status
         booking.cancellation_reason = reason
         booking.cancelled_at = timezone.now()
         booking.save()
@@ -256,7 +326,7 @@ class BookingService:
         BookingHistory.objects.create(
             booking=booking,
             old_status=old_status,
-            new_status='cancelled_by_customer',
+            new_status=new_status,
             reason=reason,
             created_by=cancelled_by,
         )
@@ -281,7 +351,20 @@ class BookingService:
         Raises:
             ValidationError: If the booking is not confirmed.
         """
-        if booking.status != 'confirmed':
+        booking = Booking.objects.select_for_update().select_related(
+            'customer', 'operator', 'bus',
+        ).get(pk=booking.pk)
+
+        old_status = booking.status
+        completed_at = timezone.now()
+        updated = Booking.objects.filter(
+            pk=booking.pk,
+            status='confirmed',
+        ).update(
+            status='completed',
+            completed_at=completed_at,
+        )
+        if updated != 1:
             # Error Code: BOK-SERV-CONFLICT-003
             # Message: Only confirmed bookings can be completed
             # Cause: Booking status is not 'confirmed'
@@ -290,11 +373,8 @@ class BookingService:
                 'Only confirmed bookings can be completed.',
                 code='BOK-SERV-CONFLICT-003',
             )
-
-        old_status = booking.status
         booking.status = 'completed'
-        booking.completed_at = timezone.now()
-        booking.save()
+        booking.completed_at = completed_at
 
         # Atomic increments using F() expressions to prevent race conditions
         CustomUser.objects.filter(pk=booking.customer.pk).update(
@@ -330,17 +410,25 @@ class PaymentService:
     ) -> Payment:
         """Create a payment record and Cashfree order for a booking.
 
+        Returns an existing pending payment if one already exists
+        (idempotency guard to prevent duplicate Cashfree orders).
+
         Args:
             booking: The booking to pay for.
             customer: The customer initiating the payment.
             payment_method: Payment method (upi, card, etc.).
 
         Returns:
-            The newly created Payment instance with cf_order_id.
+            The newly created (or existing pending) Payment instance.
 
         Raises:
-            ValidationError: If the booking is not owned by customer or Cashfree fails.
+            ValidationError (BOK-SERV-PERM-001): If the booking is not
+                owned by customer.
+            ValidationError (PAY-SERV-API-001): If Cashfree order
+                creation fails.
         """
+        booking = Booking.objects.select_for_update().get(pk=booking.pk)
+
         # Verify ownership
         if booking.customer_id != customer.id:
             # Error Code: BOK-SERV-PERM-001
@@ -352,18 +440,43 @@ class PaymentService:
                 code='BOK-SERV-PERM-001',
             )
 
+        payment_type = 'advance' if booking.payment_mode == 'online_advance' else 'full'
+
+        # Idempotency guard — return existing pending payment instead of
+        # creating a duplicate Cashfree order when user clicks "Pay" twice
+        existing_pending = Payment.objects.filter(
+            booking=booking,
+            status='created',
+            payment_type=payment_type,
+        ).first()
+        if existing_pending:
+            return existing_pending
+
         amount = booking.total_amount
         if booking.payment_mode == 'online_advance':
             amount = booking.advance_amount or (
                 booking.total_amount * Decimal('0.3')
             ).quantize(Decimal('0.01'))
 
-        payment = Payment.objects.create(
-            booking=booking,
-            amount=amount,
-            payment_type='advance' if booking.payment_mode == 'online_advance' else 'full',
-            payment_method=payment_method,
-        )
+        try:
+            payment = Payment.objects.create(
+                booking=booking,
+                amount=amount,
+                payment_type=payment_type,
+                payment_method=payment_method,
+            )
+        except IntegrityError:
+            existing_pending = Payment.objects.filter(
+                booking=booking,
+                status='created',
+                payment_type=payment_type,
+            ).first()
+            if existing_pending:
+                return existing_pending
+            raise ValidationError(
+                'Race condition detected. Please retry.',
+                code='BOK-SERV-DB-002',
+            )
 
         # ── Create Cashfree Order ──
         cf_order_id = PaymentService._create_cashfree_order(
@@ -412,6 +525,7 @@ class PaymentService:
 
         try:
             import requests
+            from requests import RequestException
 
             # Determine API base URL (TEST vs PRODUCTION)
             is_test = app_id.startswith('TEST')
@@ -443,17 +557,30 @@ class PaymentService:
                 },
             }
 
-            resp = requests.post(
-                f'{base_url}/orders',
-                json=order_data,
-                headers=headers,
-                timeout=30,
-            )
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    resp = requests.post(
+                        f'{base_url}/orders',
+                        json=order_data,
+                        headers=headers,
+                        timeout=30,
+                    )
+                except RequestException:
+                    if attempt == max_attempts:
+                        raise
+                    time.sleep(2 ** (attempt - 1))
+                    continue
 
-            if resp.status_code in (200, 201):
-                data = resp.json()
-                return data.get('cf_order_id') or data.get('order_id', '')
-            else:
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    return data.get('cf_order_id') or data.get('order_id', '')
+
+                # Retry only transient server errors
+                if resp.status_code >= 500 and attempt < max_attempts:
+                    time.sleep(2 ** (attempt - 1))
+                    continue
+
                 # Error Code: PAY-SERV-API-001
                 # Message: Cashfree API error
                 # Cause: Cashfree returned non-2xx status
@@ -469,7 +596,7 @@ class PaymentService:
                 )
         except ValidationError:
             raise
-        except Exception as e:
+        except Exception:
             # Error Code: PAY-SERV-API-001
             # Message: Cashfree API error
             # Cause: Network/connection error
@@ -486,44 +613,89 @@ class PaymentService:
         *,
         payment: Payment,
         cf_payment_id: str = '',
+        actual_amount: Optional[Decimal] = None,
         metadata: Optional[dict] = None,
-        confirmed_by: CustomUser,
+        confirmed_by: Optional[CustomUser] = None,
     ) -> Payment:
-        """Confirm a payment after Cashfree callback.
+        """Confirm a payment after Cashfree webhook callback.
+
+        Verifies the actual paid amount matches the expected amount
+        before marking the payment as captured.
 
         Args:
             payment: The payment to confirm.
-            cf_payment_id: Cashfree payment ID.
-            metadata: Additional payment metadata.
-            confirmed_by: The user confirming the payment.
+            cf_payment_id: Cashfree payment ID from webhook.
+            actual_amount: Actual amount received (from Cashfree webhook).
+                If provided, must match payment.amount.
+            metadata: Additional payment metadata from Cashfree.
+            confirmed_by: The user/system confirming the payment (None for webhooks).
 
         Returns:
             The updated Payment instance.
+
+        Raises:
+            ValidationError (PAY-SERV-VAL-001): If actual_amount does not
+                match expected payment.amount.
+            ValidationError (PAY-SERV-CONFLICT-002): If payment is already
+                captured (idempotency guard).
         """
+        # Idempotency guard — skip if already captured
+        payment = Payment.objects.select_for_update().select_related('booking').get(pk=payment.pk)
+
+        if payment.status == 'captured':
+            # Error Code: PAY-SERV-CONFLICT-002
+            # Message: Payment already captured
+            # Cause: Duplicate webhook or confirm call
+            # Solution: No action needed — payment is already processed
+            logger.info(
+                'Payment %s already captured — skipping [PAY-SERV-CONFLICT-002]',
+                payment.id,
+            )
+            return payment
+
+        # Verify actual amount matches expected amount (prevents underpayment fraud)
+        if actual_amount is not None and actual_amount != payment.amount:
+            # Error Code: PAY-SERV-VAL-001
+            # Message: Payment amount mismatch
+            # Cause: Actual paid amount differs from expected booking amount
+            # Solution: Investigate in Cashfree dashboard — possible fraud
+            logger.error(
+                'Payment amount mismatch: expected=%s actual=%s [PAY-SERV-VAL-001]',
+                payment.amount,
+                actual_amount,
+            )
+            payment.status = 'failed'
+            payment.metadata = metadata or {}
+            payment.save(update_fields=['status', 'metadata'])
+            raise ValidationError(
+                'Payment amount mismatch.',
+                code='PAY-SERV-VAL-001',
+            )
+
         payment.status = 'captured'
         payment.cf_payment_id = cf_payment_id
         payment.metadata = metadata or {}
         payment.save()
 
-        booking = payment.booking
+        booking = Booking.objects.select_for_update().get(pk=payment.booking_id)
         old_status = booking.status
 
+        # Calculate total paid — current payment is already captured and
+        # included in the query result, so do NOT add it again.
+        total_paid = Payment.objects.filter(
+            booking=booking, status='captured',
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        # Update booking payment status only — do NOT auto-confirm booking.
+        # Operator must explicitly confirm via the respond endpoint.
+        # Auto-confirming on payment bypasses operator approval flow.
         if payment.payment_type == 'advance':
             booking.payment_status = 'advance_paid'
+        elif total_paid >= booking.total_amount:
+            booking.payment_status = 'fully_paid'
         else:
-            # Check if total payments cover the booking amount
-            from django.db.models import Sum
-            total_paid = Payment.objects.filter(
-                booking=booking, status='captured',
-            ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-            total_paid += payment.amount
-            if total_paid >= booking.total_amount:
-                booking.payment_status = 'fully_paid'
-            else:
-                booking.payment_status = 'advance_paid'
+            booking.payment_status = 'advance_paid'
 
-        if booking.status == 'pending' and booking.payment_status == 'fully_paid':
-            booking.status = 'confirmed'
         booking.save()
 
         BookingHistory.objects.create(
@@ -621,3 +793,39 @@ class CouponService:
             'discount': discount,
             'final_amount': final_amount,
         }
+
+    @staticmethod
+    @transaction.atomic
+    def apply_to_booking(
+        *,
+        coupon: Coupon,
+        booking: Booking,
+        user: CustomUser,
+        discount: Decimal,
+    ) -> CouponUsage:
+        """Record coupon usage and increment the used_count.
+
+        Call this method inside create_booking after the Booking is saved.
+
+        Args:
+            coupon: The coupon being applied.
+            booking: The booking to apply the coupon to.
+            user: The customer using the coupon.
+            discount: The calculated discount amount.
+
+        Returns:
+            The created CouponUsage record.
+        """
+        # Error Code: BOK-SERV-DB-003
+        # Message: Failed to record coupon usage
+        # Cause: Database constraint violation when recording coupon usage
+        # Solution: Check CouponUsage unique_together constraint
+        usage = CouponUsage.objects.create(
+            coupon=coupon,
+            user=user,
+            booking=booking,
+            discount_applied=discount,
+        )
+        # Atomically increment used_count to avoid race conditions
+        Coupon.objects.filter(id=coupon.id).update(used_count=F('used_count') + 1)
+        return usage
