@@ -43,7 +43,10 @@ class BusService:
             ValidationError: If date format is invalid.
         """
         qs = Bus.objects.filter(
-            is_active=True, approval_status='approved',
+            is_active=True,
+            approval_status=Bus.ApprovalStatus.APPROVED,
+            operator__is_verified=True,
+            operator__is_active=True,
         ).select_related('operator').prefetch_related('photos', 'amenities')
 
         if passengers:
@@ -98,9 +101,9 @@ class BusService:
             ValidationError: If action is invalid.
         """
         if action == 'approve':
-            bus.approval_status = 'approved'
+            bus.approval_status = Bus.ApprovalStatus.APPROVED
         elif action == 'reject':
-            bus.approval_status = 'rejected'
+            bus.approval_status = Bus.ApprovalStatus.REJECTED
         else:
             # Error Code: BUS-SERV-VAL-001
             # Message: Invalid bus approval action
@@ -111,7 +114,7 @@ class BusService:
                 code='BUS-SERV-VAL-001',
             )
 
-        bus.save(update_fields=['approval_status'])
+        bus.save(update_fields=['approval_status', 'updated_at'])
         return bus
 
     @staticmethod

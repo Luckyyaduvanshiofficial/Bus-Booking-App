@@ -154,13 +154,13 @@ class BusCreateUpdateSerializer(serializers.ModelSerializer):
                 'Seating capacity must be at least 1.',
                 code='BUS-SERIAL-VAL-001',
             )
-        if value > 100:
+        if value > 60:
             # Error Code: BUS-SERIAL-VAL-002
             # Message: Seating capacity too high
-            # Cause: Value exceeds maximum allowed (100)
-            # Solution: Set seating_capacity to 100 or less
+            # Cause: Value exceeds maximum allowed (60)
+            # Solution: Set seating_capacity to 60 or less
             raise serializers.ValidationError(
-                'Seating capacity cannot exceed 100.',
+                'Seating capacity cannot exceed 60.',
                 code='BUS-SERIAL-VAL-002',
             )
         return value

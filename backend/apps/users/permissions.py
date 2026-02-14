@@ -77,14 +77,15 @@ class IsOwnerOrAdmin(BasePermission):
 class IsOperatorOrAdmin(BasePermission):
     """Allow access to operators or admins."""
 
-    message = 'Only operators or admins can access this endpoint. [USR-VIEWS-PERM-004]'
+    message = 'Only verified operators or admins can access this endpoint. [USR-VIEWS-PERM-004]'
 
     def has_permission(self, request, view) -> bool:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.role == CustomUser.Role.ADMIN:
+            return True
         return (
-            request.user
-            and request.user.is_authenticated
-            and request.user.role in (
-                CustomUser.Role.OPERATOR,
-                CustomUser.Role.ADMIN,
-            )
+            user.role == CustomUser.Role.OPERATOR
+            and user.is_verified
         )

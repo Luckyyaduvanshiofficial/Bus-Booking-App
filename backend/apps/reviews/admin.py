@@ -1,5 +1,6 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from .models import BusReview, OperatorReview
+from .services import ReviewService
 
 
 @admin.register(BusReview)
@@ -17,11 +18,27 @@ class BusReviewAdmin(admin.ModelAdmin):
 
     @admin.action(description='Approve selected reviews')
     def approve_reviews(self, request, queryset):
-        queryset.update(is_approved=True, is_flagged=False)
+        approved = 0
+        for review in queryset.select_related('bus', 'operator'):
+            ReviewService.moderate_review(review=review, action='approve')
+            approved += 1
+        self.message_user(
+            request,
+            f'Approved {approved} review(s).',
+            level=messages.SUCCESS,
+        )
 
     @admin.action(description='Flag selected reviews')
     def flag_reviews(self, request, queryset):
-        queryset.update(is_flagged=True)
+        flagged = 0
+        for review in queryset.select_related('bus', 'operator'):
+            ReviewService.moderate_review(review=review, action='flag')
+            flagged += 1
+        self.message_user(
+            request,
+            f'Flagged {flagged} review(s).',
+            level=messages.WARNING,
+        )
 
 
 @admin.register(OperatorReview)

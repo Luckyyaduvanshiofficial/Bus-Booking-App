@@ -18,12 +18,12 @@ from django.http import Http404
 from django.views.decorators.csrf import csrf_exempt
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import mixins, status, viewsets
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes, throttle_classes
 from rest_framework.exceptions import ValidationError
 from rest_framework.filters import OrderingFilter
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import UserRateThrottle
+from rest_framework.throttling import ScopedRateThrottle, UserRateThrottle
 
 from apps.users.permissions import IsAdmin, IsCustomer, IsOperatorOrAdmin
 
@@ -51,6 +51,11 @@ class BookingCreateThrottle(UserRateThrottle):
     with dozens of pending bookings.
     """
     rate = '5/minute'
+
+
+class CashfreeWebhookThrottle(ScopedRateThrottle):
+    """Rate limiter for webhook endpoint to prevent abuse."""
+    scope = 'webhook'
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -385,21 +390,92 @@ class PaymentViewSet(
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        actual_amount = None
-        if 'amount' in request.data:
-            try:
-                actual_amount = Decimal(str(request.data['amount']))
-            except (InvalidOperation, TypeError, ValueError):
-                return Response(
-                    {'error': 'Invalid amount', 'code': 'PAY-VIEWS-VAL-004'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        reason = str(request.data.get('reason', '')).strip()
+        if not reason:
+            return Response(
+                {
+                    'error': 'Manual confirmation reason is required.',
+                    'code': 'PAY-VIEWS-VAL-005',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if 'amount' not in request.data:
+            return Response(
+                {'error': 'Amount is required', 'code': 'PAY-VIEWS-VAL-004'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            actual_amount = Decimal(str(request.data['amount']))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response(
+                {'error': 'Invalid amount', 'code': 'PAY-VIEWS-VAL-004'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if actual_amount <= 0:
+            return Response(
+                {'error': 'Amount must be positive', 'code': 'PAY-VIEWS-VAL-004'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment_reference = (
+            request.data.get('cf_payment_id')
+            or request.data.get('payment_reference_id')
+            or ''
+        )
+        if not payment_reference:
+            return Response(
+                {
+                    'error': 'Payment reference is required.',
+                    'code': 'PAY-VIEWS-VAL-006',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        metadata = request.data.get('metadata', {})
+        if not isinstance(metadata, dict):
+            return Response(
+                {'error': 'metadata must be an object', 'code': 'PAY-VIEWS-VAL-007'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        metadata = {
+            **metadata,
+            'manual_confirmation': {
+                'reason': reason,
+                'confirmed_by_user_id': str(request.user.id),
+                'confirmed_at': request.data.get('confirmed_at', ''),
+            },
+        }
+
+        verification_mode = str(
+            request.data.get('verification_mode', 'gateway'),
+        ).strip().lower()
+        if verification_mode not in {'gateway', 'manual'}:
+            return Response(
+                {
+                    'error': "verification_mode must be 'gateway' or 'manual'",
+                    'code': 'PAY-VIEWS-VAL-008',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if verification_mode == 'gateway':
+            gateway_record = PaymentService.verify_cashfree_payment_reference(
+                payment=payment,
+                cf_payment_id=payment_reference,
+                expected_amount=actual_amount,
+            )
+            metadata['gateway_verification'] = gateway_record
+        else:
+            metadata['manual_confirmation']['verification_mode'] = 'manual'
 
         payment = PaymentService.confirm_payment(
             payment=payment,
-            cf_payment_id=request.data.get('cf_payment_id', ''),
+            cf_payment_id=payment_reference,
             actual_amount=actual_amount,
-            metadata=request.data.get('metadata', {}),
+            metadata=metadata,
             confirmed_by=request.user,
         )
         return Response(PaymentSerializer(payment, context={'request': request}).data)
@@ -442,6 +518,7 @@ def _verify_cashfree_signature(payload_bytes: bytes, signature: str) -> bool:
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([CashfreeWebhookThrottle])
 def cashfree_webhook(request) -> Response:
     """Handle Cashfree payment webhook notifications.
 

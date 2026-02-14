@@ -22,6 +22,7 @@ from apps.users.services import (
     DocumentService,
     OperatorService,
     UserService,
+    get_supabase_client,
 )
 
 
@@ -165,6 +166,12 @@ class NotificationModelTest(TestCase):
 class AuthServiceTest(TestCase):
     """Test AuthService – OTP send/verify via Supabase."""
 
+    def setUp(self) -> None:
+        get_supabase_client.cache_clear()
+
+    def tearDown(self) -> None:
+        get_supabase_client.cache_clear()
+
     @patch('supabase.create_client')
     def test_send_otp_success(self, mock_client) -> None:
         """send_otp should return success message."""
@@ -258,6 +265,7 @@ class UserServiceTest(TestCase):
         )
         self.assertTrue(user.is_verified)
         self.assertEqual(user.verification_status, 'verified')
+        self.assertIsNotNone(user.verified_at)
 
     def test_verify_user_reject(self) -> None:
         """Admin rejects an operator."""
@@ -266,7 +274,9 @@ class UserServiceTest(TestCase):
             action='reject',
             reason='Incomplete documents',
         )
+        self.assertFalse(user.is_verified)
         self.assertEqual(user.verification_status, 'rejected')
+        self.assertIsNone(user.verified_at)
 
     def test_verify_user_invalid_action(self) -> None:
         """USR-SERV-VAL-001: Invalid action."""

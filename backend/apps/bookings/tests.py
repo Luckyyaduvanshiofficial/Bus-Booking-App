@@ -18,6 +18,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from apps.bookings.models import Booking, BookingHistory, Coupon, CouponUsage, Payment
 from apps.bookings.services import BookingService, CouponService, PaymentService
+from apps.bookings.tasks import expire_pending_bookings
 from apps.buses.models import AvailabilityBlock, Bus
 from apps.users.models import CustomUser
 
@@ -39,6 +40,7 @@ def _create_test_users():
     operator = CustomUser(
         phone='+919200000002', username='+919200000002',
         name='Test Operator', role='operator',
+        is_verified=True, verification_status='verified',
         business_name='Test Travels', commission_rate=Decimal('10.00'),
     )
     operator.set_password('test123')
@@ -298,6 +300,29 @@ class BookingServiceTest(TestCase):
             AvailabilityBlock.objects.filter(booking=booking).exists(),
         )
 
+    def test_operator_cancel_requires_reason(self) -> None:
+        """BOK-SERV-VAL-007: Operator cancellation requires non-empty reason."""
+        booking = BookingService.create_booking(
+            customer=self.customer,
+            validated_data={
+                'bus': self.bus,
+                'trip_type': 'one_way',
+                'pickup_location': 'Jaipur',
+                'drop_location': 'Delhi',
+                'pickup_date': self.future_date,
+                'pickup_time': dt.time(8, 0),
+                'passenger_count': 10,
+                'payment_mode': 'online_full',
+            },
+        )
+        with self.assertRaises(ValidationError) as ctx:
+            BookingService.cancel_booking(
+                booking=booking,
+                reason='   ',
+                cancelled_by=self.operator,
+            )
+        self.assertEqual(ctx.exception.detail[0].code, 'BOK-SERV-VAL-007')
+
     def test_complete_booking(self) -> None:
         """Operator completes a confirmed booking."""
         booking = BookingService.create_booking(
@@ -349,7 +374,21 @@ class CouponServiceTest(TestCase):
 
     def setUp(self) -> None:
         """Create test coupon and user."""
-        self.customer, _, _ = _create_test_users()
+        self.customer, self.operator, _ = _create_test_users()
+        self.bus = _create_test_bus(self.operator)
+        self.booking = BookingService.create_booking(
+            customer=self.customer,
+            validated_data={
+                'bus': self.bus,
+                'trip_type': 'one_way',
+                'pickup_location': 'Jaipur',
+                'drop_location': 'Delhi',
+                'pickup_date': dt.date.today() + dt.timedelta(days=14),
+                'pickup_time': dt.time(8, 0),
+                'passenger_count': 10,
+                'payment_mode': 'online_full',
+            },
+        )
         self.coupon = Coupon.objects.create(
             code='SAVE10', discount_type='percentage',
             discount_value=Decimal('10'),
@@ -389,6 +428,52 @@ class CouponServiceTest(TestCase):
                 user=self.customer,
             )
         self.assertEqual(ctx.exception.detail[0].code, 'BOK-SERV-VAL-005')
+
+    def test_apply_to_booking_blocks_exhausted_coupon(self) -> None:
+        """BOK-SERV-VAL-004 when usage_limit is already exhausted."""
+        self.coupon.usage_limit = 1
+        self.coupon.used_count = 1
+        self.coupon.save(update_fields=['usage_limit', 'used_count'])
+
+        with self.assertRaises(ValidationError) as ctx:
+            CouponService.apply_to_booking(
+                coupon=self.coupon,
+                booking=self.booking,
+                user=self.customer,
+                discount=Decimal('100.00'),
+            )
+        self.assertEqual(ctx.exception.detail[0].code, 'BOK-SERV-VAL-004')
+
+    def test_apply_to_booking_enforces_per_user_limit(self) -> None:
+        """BOK-SERV-VAL-006 when user already hit per-user usage cap."""
+        previous_booking = BookingService.create_booking(
+            customer=self.customer,
+            validated_data={
+                'bus': self.bus,
+                'trip_type': 'one_way',
+                'pickup_location': 'Jaipur',
+                'drop_location': 'Delhi',
+                'pickup_date': dt.date.today() + dt.timedelta(days=20),
+                'pickup_time': dt.time(8, 0),
+                'passenger_count': 10,
+                'payment_mode': 'online_full',
+            },
+        )
+        CouponUsage.objects.create(
+            coupon=self.coupon,
+            user=self.customer,
+            booking=previous_booking,
+            discount_applied=Decimal('100.00'),
+        )
+
+        with self.assertRaises(ValidationError) as ctx:
+            CouponService.apply_to_booking(
+                coupon=self.coupon,
+                booking=self.booking,
+                user=self.customer,
+                discount=Decimal('100.00'),
+            )
+        self.assertEqual(ctx.exception.detail[0].code, 'BOK-SERV-VAL-006')
 
 
 class PaymentServiceTest(TestCase):
@@ -440,6 +525,45 @@ class PaymentServiceTest(TestCase):
                 customer=other,
             )
         self.assertEqual(ctx.exception.detail[0].code, 'BOK-SERV-PERM-001')
+
+
+class PendingBookingExpiryTaskTest(TestCase):
+    """Test scheduled expiry for stale pending bookings."""
+
+    def setUp(self) -> None:
+        self.customer, self.operator, _ = _create_test_users()
+        self.bus = _create_test_bus(self.operator)
+        self.booking = BookingService.create_booking(
+            customer=self.customer,
+            validated_data={
+                'bus': self.bus,
+                'trip_type': 'one_way',
+                'pickup_location': 'Jaipur',
+                'drop_location': 'Delhi',
+                'pickup_date': dt.date.today() + dt.timedelta(days=7),
+                'pickup_time': dt.time(8, 0),
+                'passenger_count': 10,
+                'payment_mode': 'online_full',
+            },
+        )
+        stale_ts = timezone.now() - dt.timedelta(hours=48)
+        Booking.objects.filter(pk=self.booking.pk).update(created_at=stale_ts)
+
+    def test_expire_pending_bookings_task(self) -> None:
+        expired_count = expire_pending_bookings()
+        self.assertEqual(expired_count, 1)
+
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.status, Booking.Status.EXPIRED)
+        self.assertFalse(
+            AvailabilityBlock.objects.filter(booking=self.booking).exists(),
+        )
+        self.assertTrue(
+            BookingHistory.objects.filter(
+                booking=self.booking,
+                new_status=Booking.Status.EXPIRED,
+            ).exists(),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -501,6 +625,115 @@ class BookingViewSetAPITest(APITestCase):
         }
         resp = self.client.post('/api/v1/bookings/', data, format='json')
         self.assertEqual(resp.status_code, 403)
+
+    def test_create_booking_rejects_past_pickup_date(self) -> None:
+        """Serializer blocks booking requests with past pickup_date."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.cust_token.key}')
+        data = {
+            'bus': str(self.bus.id),
+            'trip_type': 'one_way',
+            'pickup_location': 'Jaipur',
+            'drop_location': 'Delhi',
+            'pickup_date': '2020-01-01',
+            'pickup_time': '08:00:00',
+            'passenger_count': 10,
+            'payment_mode': 'online_full',
+        }
+        resp = self.client.post('/api/v1/bookings/', data, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+
+class PaymentViewSetAPITest(APITestCase):
+    """Test payment confirm endpoint validation guards."""
+
+    def setUp(self) -> None:
+        from rest_framework.authtoken.models import Token
+
+        self.customer, self.operator, self.admin = _create_test_users()
+        self.bus = _create_test_bus(self.operator)
+        self.future_date = dt.date.today() + dt.timedelta(days=10)
+        self.booking = BookingService.create_booking(
+            customer=self.customer,
+            validated_data={
+                'bus': self.bus,
+                'trip_type': 'one_way',
+                'pickup_location': 'Jaipur',
+                'drop_location': 'Delhi',
+                'pickup_date': self.future_date,
+                'pickup_time': dt.time(8, 0),
+                'passenger_count': 10,
+                'payment_mode': 'online_full',
+            },
+        )
+        BookingService.respond_to_booking(
+            booking=self.booking,
+            new_status='confirmed',
+            responded_by=self.operator,
+        )
+        self.payment = Payment.objects.create(
+            booking=self.booking,
+            amount=self.booking.total_amount,
+            payment_type='full',
+            payment_method='upi',
+            status='created',
+        )
+
+        self.admin_token = Token.objects.create(user=self.admin)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.admin_token.key}')
+
+    def test_confirm_requires_reason(self) -> None:
+        resp = self.client.post(
+            f'/api/v1/bookings/payments/{self.payment.id}/confirm/',
+            {
+                'amount': str(self.payment.amount),
+                'payment_reference_id': 'MANUAL-REF-1',
+                'verification_mode': 'manual',
+            },
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data['code'], 'PAY-VIEWS-VAL-005')
+
+    def test_confirm_requires_amount(self) -> None:
+        resp = self.client.post(
+            f'/api/v1/bookings/payments/{self.payment.id}/confirm/',
+            {
+                'reason': 'Manual settlement verified by finance',
+                'payment_reference_id': 'MANUAL-REF-2',
+                'verification_mode': 'manual',
+            },
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data['code'], 'PAY-VIEWS-VAL-004')
+
+    def test_confirm_requires_reference(self) -> None:
+        resp = self.client.post(
+            f'/api/v1/bookings/payments/{self.payment.id}/confirm/',
+            {
+                'reason': 'Manual settlement verified by finance',
+                'amount': str(self.payment.amount),
+                'verification_mode': 'manual',
+            },
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data['code'], 'PAY-VIEWS-VAL-006')
+
+    def test_confirm_manual_success(self) -> None:
+        resp = self.client.post(
+            f'/api/v1/bookings/payments/{self.payment.id}/confirm/',
+            {
+                'reason': 'Cash collected and reconciled',
+                'amount': str(self.payment.amount),
+                'payment_reference_id': 'MANUAL-REF-3',
+                'verification_mode': 'manual',
+            },
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['status'], 'captured')
 
 
 class CouponViewSetAPITest(APITestCase):

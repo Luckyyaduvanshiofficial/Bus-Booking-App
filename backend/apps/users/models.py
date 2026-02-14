@@ -5,9 +5,12 @@ CustomUser, Document, and Notification models with phone-based auth.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import uuid
 from datetime import datetime
 
+from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import RegexValidator
@@ -16,6 +19,8 @@ from django.db import models
 
 class CustomUser(AbstractUser):
     """Custom user model with phone-based auth as specified in PRD Section 4."""
+
+    _ENCRYPTED_PREFIX = 'enc::'
 
     class Role(models.TextChoices):
         CUSTOMER = 'customer', 'Customer'
@@ -68,10 +73,10 @@ class CustomUser(AbstractUser):
         max_length=50, choices=BusinessType.choices, blank=True, null=True,
     )
     gst_number: str = models.CharField(max_length=20, blank=True, null=True)
-    pan_number: str = models.CharField(max_length=15, blank=True, null=True)
+    pan_number: str = models.CharField(max_length=255, blank=True, null=True)
 
     # Bank details
-    bank_account: str = models.CharField(max_length=20, blank=True, null=True)
+    bank_account: str = models.CharField(max_length=255, blank=True, null=True)
     bank_ifsc: str = models.CharField(max_length=15, blank=True, null=True)
     bank_name: str = models.CharField(max_length=100, blank=True, null=True)
 
@@ -174,6 +179,8 @@ class CustomUser(AbstractUser):
         the ``password`` field from ``full_clean`` because OTP-based
         auth does not require passwords.
         """
+        self.bank_account = self._encrypt_sensitive(self.bank_account)
+        self.pan_number = self._encrypt_sensitive(self.pan_number)
         if not kwargs.pop('skip_validation', False):
             self.full_clean(exclude=['password'])
         super().save(*args, **kwargs)
@@ -204,6 +211,55 @@ class CustomUser(AbstractUser):
             self.subscription_expires_at is not None
             and self.subscription_expires_at > timezone.now()
         )
+
+    @classmethod
+    def _get_fernet(cls):
+        key = (getattr(settings, 'FIELD_ENCRYPTION_KEY', '') or '').strip()
+        if not key:
+            return None
+
+        key_bytes = key.encode('utf-8')
+        try:
+            return Fernet(key_bytes)
+        except Exception:
+            derived = base64.urlsafe_b64encode(hashlib.sha256(key_bytes).digest())
+            return Fernet(derived)
+
+    @classmethod
+    def _encrypt_sensitive(cls, value: str | None) -> str | None:
+        if value in (None, ''):
+            return value
+        text = str(value)
+        if text.startswith(cls._ENCRYPTED_PREFIX):
+            return text
+        fernet = cls._get_fernet()
+        if not fernet:
+            return text
+        encrypted = fernet.encrypt(text.encode('utf-8')).decode('utf-8')
+        return f'{cls._ENCRYPTED_PREFIX}{encrypted}'
+
+    @classmethod
+    def _decrypt_sensitive(cls, value: str | None) -> str:
+        if not value:
+            return ''
+        text = str(value)
+        if not text.startswith(cls._ENCRYPTED_PREFIX):
+            return text
+
+        fernet = cls._get_fernet()
+        if not fernet:
+            return ''
+        token = text[len(cls._ENCRYPTED_PREFIX):]
+        try:
+            return fernet.decrypt(token.encode('utf-8')).decode('utf-8')
+        except (InvalidToken, ValueError):
+            return ''
+
+    def get_bank_account_plain(self) -> str:
+        return self._decrypt_sensitive(self.bank_account)
+
+    def get_pan_number_plain(self) -> str:
+        return self._decrypt_sensitive(self.pan_number)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -368,6 +424,7 @@ class Notification(models.Model):
         DOCUMENT_VERIFIED = 'document_verified', 'Document Verified'
         DOCUMENT_REJECTED = 'document_rejected', 'Document Rejected'
         OPERATOR_VERIFIED = 'operator_verified', 'Operator Verified'
+        OPERATOR_REJECTED = 'operator_rejected', 'Operator Rejected'
         PAYOUT_PROCESSED = 'payout_processed', 'Payout Processed'
 
     id: models.UUIDField = models.UUIDField(

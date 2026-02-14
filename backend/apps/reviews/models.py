@@ -10,7 +10,8 @@ from datetime import datetime
 
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
-from django.db import models
+from django.db import models, transaction
+from django.db.models import Avg, Count
 
 
 class BusReview(models.Model):
@@ -142,24 +143,36 @@ class BusReview(models.Model):
             self._update_operator_ratings()
 
     def _update_bus_ratings(self):
-        """Recalculate bus average rating and count."""
-        reviews = BusReview.objects.filter(bus=self.bus, is_approved=True)
-        if reviews.exists():
-            from django.db.models import Avg
-            avg = reviews.aggregate(avg=Avg('rating_overall'))['avg']
-            self.bus.rating_avg = round(avg, 1)
-            self.bus.rating_count = reviews.count()
-            self.bus.save(update_fields=['rating_avg', 'rating_count'])
+        """Recalculate bus average rating and count under row lock."""
+        bus_model = type(self.bus)
+        with transaction.atomic():
+            bus = bus_model.objects.select_for_update().get(pk=self.bus_id)
+            aggregates = BusReview.objects.filter(
+                bus_id=self.bus_id,
+                is_approved=True,
+            ).aggregate(
+                avg=Avg('rating_overall'),
+                count=Count('id'),
+            )
+            bus.rating_avg = round(aggregates['avg'] or 0, 1)
+            bus.rating_count = aggregates['count'] or 0
+            bus.save(update_fields=['rating_avg', 'rating_count'])
 
     def _update_operator_ratings(self):
-        """Recalculate operator average rating and count."""
-        reviews = BusReview.objects.filter(operator=self.operator, is_approved=True)
-        if reviews.exists():
-            from django.db.models import Avg
-            avg = reviews.aggregate(avg=Avg('rating_overall'))['avg']
-            self.operator.rating_avg = round(avg, 1)
-            self.operator.rating_count = reviews.count()
-            self.operator.save(update_fields=['rating_avg', 'rating_count'])
+        """Recalculate operator average rating and count under row lock."""
+        operator_model = type(self.operator)
+        with transaction.atomic():
+            operator = operator_model.objects.select_for_update().get(pk=self.operator_id)
+            aggregates = BusReview.objects.filter(
+                operator_id=self.operator_id,
+                is_approved=True,
+            ).aggregate(
+                avg=Avg('rating_overall'),
+                count=Count('id'),
+            )
+            operator.rating_avg = round(aggregates['avg'] or 0, 1)
+            operator.rating_count = aggregates['count'] or 0
+            operator.save(update_fields=['rating_avg', 'rating_count'])
 
 
 class OperatorReview(models.Model):
