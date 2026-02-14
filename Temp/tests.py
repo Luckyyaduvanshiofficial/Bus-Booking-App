@@ -184,7 +184,21 @@ class OperatorReviewModelTest(TestCase):
             comment='Very professional operator with prompt service.',
         )
         self.assertEqual(review.operator, self.operator)
-        self.assertIsNotNone(review.overall_rating)
+        self.assertEqual(review.overall_rating, Decimal('4.3'))
+
+    def test_operator_review_updates_operator_aggregate_rating(self) -> None:
+        """Approved operator reviews should update operator rating_avg/rating_count."""
+        OperatorReview.objects.create(
+            operator=self.operator,
+            reviewer=self.customer,
+            responsiveness_rating=5,
+            professionalism_rating=5,
+            reliability_rating=4,
+            comment='Consistent and reliable service with professional communication.',
+        )
+        self.operator.refresh_from_db()
+        self.assertEqual(self.operator.rating_count, 1)
+        self.assertEqual(self.operator.rating_avg, Decimal('4.7'))
 
 
 # ═══════════════════════════════════════════════════════════════

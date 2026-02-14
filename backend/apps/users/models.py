@@ -417,10 +417,17 @@ class Notification(models.Model):
     """Notifications for all user roles – PRD Section 4."""
 
     class NotificationType(models.TextChoices):
+        # Booking lifecycle
+        BOOKING_CREATED = 'booking_created', 'Booking Created'
         BOOKING_CONFIRMED = 'booking_confirmed', 'Booking Confirmed'
+        BOOKING_REJECTED = 'booking_rejected', 'Booking Rejected'
         BOOKING_CANCELLED = 'booking_cancelled', 'Booking Cancelled'
+        BOOKING_EXPIRED = 'booking_expired', 'Booking Expired'
+        TRIP_REMINDER = 'trip_reminder', 'Trip Reminder'
+        # Payment & Reviews
         NEW_REVIEW = 'new_review', 'New Review'
         PAYMENT_RECEIVED = 'payment_received', 'Payment Received'
+        # Verification
         DOCUMENT_VERIFIED = 'document_verified', 'Document Verified'
         DOCUMENT_REJECTED = 'document_rejected', 'Document Rejected'
         OPERATOR_VERIFIED = 'operator_verified', 'Operator Verified'
@@ -444,6 +451,12 @@ class Notification(models.Model):
     message: str = models.TextField()
     is_read: bool = models.BooleanField(default=False)
     metadata: dict = models.JSONField(default=dict, blank=True)
+    
+    # Delivery tracking (via Brevo)
+    whatsapp_sent: bool = models.BooleanField(default=False)
+    whatsapp_sent_at: datetime = models.DateTimeField(null=True, blank=True)
+    email_sent: bool = models.BooleanField(default=False)
+    email_sent_at: datetime = models.DateTimeField(null=True, blank=True)
 
     created_at: datetime = models.DateTimeField(auto_now_add=True)
 

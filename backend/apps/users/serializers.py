@@ -6,6 +6,9 @@ Each serializer declares explicit fields and applies validate() where needed.
 from __future__ import annotations
 
 from rest_framework import serializers
+from rest_framework.exceptions import PermissionDenied
+
+from apps.buses.models import Bus
 
 from .models import CustomUser, Document, Notification
 
@@ -151,6 +154,11 @@ class DocumentSerializer(serializers.ModelSerializer):
 
 class DocumentUploadSerializer(serializers.ModelSerializer):
     """Minimal fields for document upload."""
+    bus = serializers.PrimaryKeyRelatedField(
+        queryset=Bus.objects.select_related('operator').all(),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = Document
@@ -159,6 +167,20 @@ class DocumentUploadSerializer(serializers.ModelSerializer):
             'document_number', 'expiry_date',
         ]
         read_only_fields = ['id']
+
+    def validate_bus(self, value: Bus | None) -> Bus | None:
+        """Ensure operators can only upload bus documents for their own buses."""
+        if value is None:
+            return value
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated or request.user.role == 'admin':
+            return value
+        if value.operator_id != request.user.id:
+            raise PermissionDenied(
+                'You can only upload documents for your own buses.',
+                code='DOC-VIEWS-PERM-003',
+            )
+        return value
 
 
 class DocumentVerifySerializer(serializers.Serializer):
@@ -175,8 +197,13 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'type', 'title', 'message',
             'is_read', 'metadata', 'created_at',
+            'whatsapp_sent', 'whatsapp_sent_at',
+            'email_sent', 'email_sent_at',
         ]
-        read_only_fields = ['id', 'type', 'title', 'message', 'metadata', 'created_at']
+        read_only_fields = [
+            'id', 'type', 'title', 'message', 'metadata', 'created_at',
+            'whatsapp_sent', 'whatsapp_sent_at', 'email_sent', 'email_sent_at'
+        ]
 
 
 # ── Auth Serializers ─────────────────────────────────────────

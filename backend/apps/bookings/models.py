@@ -49,6 +49,8 @@ class Booking(models.Model):
         PENDING = 'pending', 'Pending'
         ADVANCE_PAID = 'advance_paid', 'Advance Paid'
         FULLY_PAID = 'fully_paid', 'Fully Paid'
+        REFUND_PENDING = 'refund_pending', 'Refund Pending'
+        REFUND_FAILED = 'refund_failed', 'Refund Failed'
         REFUNDED = 'refunded', 'Refunded'
 
     class OperatorResponse(models.TextChoices):
@@ -158,6 +160,10 @@ class Booking(models.Model):
         null=True, blank=True,
     )
     rejection_reason: str = models.TextField(blank=True, null=True)
+    expires_at: models.DateTimeField = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Auto-expire pending booking after this time (created_at + 2 hours)',
+    )
 
     # ── Payment ──
     payment_mode: str = models.CharField(
@@ -168,6 +174,17 @@ class Booking(models.Model):
     )
     advance_amount: models.DecimalField = models.DecimalField(
         max_digits=10, decimal_places=2, default=0,
+    )
+    remaining_amount: models.DecimalField = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text='Amount to be paid to driver in cash',
+    )
+    driver_cash_received: bool = models.BooleanField(
+        default=False,
+        help_text='Operator confirms cash received from customer',
+    )
+    driver_cash_received_at: models.DateTimeField = models.DateTimeField(
+        null=True, blank=True,
     )
 
     # ── Cancellation ──
@@ -206,23 +223,26 @@ class Booking(models.Model):
     def clean(self) -> None:
         """Model-level validation with error codes from ERROR_REGISTRY.md.
 
-        Note: pickup_date past-date check only runs on creation (no pk yet).
+        Note: pickup_date past-date check only runs on creation.
         This prevents save() from failing when updating status on bookings
         whose trip date has already passed (e.g., marking as completed).
         """
         super().clean()
         from django.core.exceptions import ValidationError
-        from datetime import date as _date
 
         # Error Code: BOK-MODELS-VAL-001
         # Message: Pickup datetime must be in future
         # Cause: Past date selected
         # Solution: Choose future date
         # Only validate on creation — existing bookings may have past dates
-        if not self.pk and self.pickup_date and self.pickup_date < _date.today():
+        if self._state.adding and self.pickup_date and self.pickup_date <= timezone.now().date():
             raise ValidationError(
-                'Pickup date must be in the future.',
-                code='BOK-MODELS-VAL-001',
+                {
+                    'pickup_date': ValidationError(
+                        'Pickup date must be in the future.',
+                        code='BOK-MODELS-VAL-001',
+                    ),
+                },
             )
 
         # Error Code: BOK-MODELS-VAL-002
@@ -261,9 +281,7 @@ class Booking(models.Model):
     def save(self, *args, **kwargs) -> None:
         """Generate booking number with random suffix and save.
 
-        Note: full_clean() is called in BookingService.create_booking()
-        before save(), so we do NOT call self.clean() here to avoid
-        double validation and extra DB queries.
+        Always runs full_clean() before persisting.
         """
         if not self.booking_number:
             import secrets
@@ -276,6 +294,7 @@ class Booking(models.Model):
                         # to eliminate race conditions between concurrent inserts
                         suffix = secrets.token_hex(3).upper()
                         self.booking_number = f"BK-{today}-{suffix}"
+                        self.full_clean()
                         super().save(*args, **kwargs)
                     return
                 except IntegrityError:
@@ -284,6 +303,7 @@ class Booking(models.Model):
                     self.booking_number = ''
                     continue
         else:
+            self.full_clean()
             super().save(*args, **kwargs)
 
     # ── Business methods ──
@@ -294,8 +314,56 @@ class Booking(models.Model):
             self.Status.COMPLETED,
             self.Status.CANCELLED_BY_CUSTOMER,
             self.Status.CANCELLED_BY_OPERATOR,
+            self.Status.EXPIRED,
         )
         return self.status not in non_cancellable
+
+    def transition_to(self, new_status: str) -> None:
+        """State machine guard for booking status transitions.
+        
+        Prevents invalid status transitions and ensures data integrity.
+        Always use this method instead of direct status assignment.
+        
+        Raises:
+            ValidationError (BOK-MODELS-STATE-001): If transition is invalid.
+        """
+        # Define valid state transitions
+        valid_transitions = {
+            self.Status.PENDING: [
+                self.Status.CONFIRMED,
+                self.Status.CANCELLED_BY_CUSTOMER,
+                self.Status.CANCELLED_BY_OPERATOR,
+                self.Status.EXPIRED,
+            ],
+            self.Status.CONFIRMED: [
+                self.Status.IN_PROGRESS,
+                self.Status.COMPLETED,
+                self.Status.CANCELLED_BY_CUSTOMER,
+                self.Status.CANCELLED_BY_OPERATOR,
+            ],
+            self.Status.IN_PROGRESS: [
+                self.Status.COMPLETED,
+                self.Status.CANCELLED_BY_OPERATOR,
+            ],
+            self.Status.COMPLETED: [],  # Terminal state
+            self.Status.CANCELLED_BY_CUSTOMER: [],  # Terminal state
+            self.Status.CANCELLED_BY_OPERATOR: [],  # Terminal state
+            self.Status.EXPIRED: [],  # Terminal state
+        }
+        
+        allowed = valid_transitions.get(self.status, [])
+        if new_status not in allowed:
+            from django.core.exceptions import ValidationError
+            # Error Code: BOK-MODELS-STATE-001
+            # Message: Invalid booking status transition
+            # Cause: Attempted to transition from {current} to {target}
+            # Solution: Check valid transitions in state machine
+            raise ValidationError(
+                f'Cannot transition from {self.status} to {new_status}',
+                code='BOK-MODELS-STATE-001',
+            )
+        
+        self.status = new_status
 
     def calculate_refund(self) -> Decimal:
         """Calculate refund amount based on cancellation timing.
@@ -337,6 +405,8 @@ class Payment(models.Model):
         AUTHORIZED = 'authorized', 'Authorized'
         CAPTURED = 'captured', 'Captured'
         FAILED = 'failed', 'Failed'
+        REFUND_PENDING = 'refund_pending', 'Refund Pending'
+        REFUND_FAILED = 'refund_failed', 'Refund Failed'
         REFUNDED = 'refunded', 'Refunded'
 
     id: models.UUIDField = models.UUIDField(
@@ -352,6 +422,12 @@ class Payment(models.Model):
     cf_payment_id: str = models.CharField(max_length=100, blank=True, null=True)
     cf_payment_session_id: str = models.CharField(
         max_length=255, blank=True, null=True,
+    )
+    
+    # ── Idempotency ──
+    idempotency_key: str = models.CharField(
+        max_length=255, unique=True, null=True, blank=True,
+        help_text='Unique key to prevent duplicate payment processing',
     )
 
     # ── Amount ──
@@ -421,7 +497,7 @@ class Payment(models.Model):
         # Message: Payment already processed for this booking
         # Cause: Duplicate payment attempt
         # Solution: Check payment.status
-        if not self.pk and self.booking_id:
+        if self._state.adding and self.booking_id:
             existing = Payment.objects.filter(
                 booking_id=self.booking_id,
                 status__in=('captured', 'authorized'),

@@ -13,8 +13,10 @@ import logging
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import QuerySet
 from django.http import Http404
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import mixins, status, viewsets
@@ -38,6 +40,7 @@ from .serializers import (
     CouponSerializer,
     PaymentInitiateSerializer,
     PaymentSerializer,
+    PriceCalculateSerializer,
 )
 from .services import BookingService, CouponService, PaymentService
 
@@ -248,6 +251,78 @@ class BookingViewSet(viewsets.ModelViewSet):
             booking=booking,
             completed_by=request.user,
         )
+        return Response(
+            BookingDetailSerializer(booking, context={'request': request}).data,
+        )
+
+    @action(detail=True, methods=['post'], permission_classes=[IsOperatorOrAdmin])
+    def mark_paid_to_driver(self, request, pk=None) -> Response:
+        """Operator confirms cash received from customer.
+
+        For payment_mode='online_advance' or 'pay_driver', operator marks
+        when customer has paid the remaining cash amount to the driver.
+
+        Error Codes:
+            BOK-VIEWS-PERM-006: Only operator can mark cash received
+            BOK-SERV-VAL-017: Booking must be confirmed
+            BOK-SERV-VAL-018: Payment mode doesn't require cash
+        """
+        booking = self.get_object()
+
+        # Ownership check (safe on unlocked object — owner cannot change)
+        if (request.user.role == 'operator'
+                and booking.operator != request.user):
+            return Response(
+                {'error': 'Not authorized', 'code': 'BOK-VIEWS-PERM-006'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Lock then validate to prevent TOCTOU race conditions
+        with transaction.atomic():
+            booking_locked = Booking.objects.select_for_update().get(pk=booking.pk)
+
+            if booking_locked.status != Booking.Status.CONFIRMED:
+                return Response(
+                    {
+                        'error': 'Booking must be confirmed before marking cash received',
+                        'code': 'BOK-SERV-VAL-017',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if booking_locked.payment_mode not in ('online_advance', 'pay_driver'):
+                return Response(
+                    {
+                        'error': 'This payment mode does not require cash payment to driver',
+                        'code': 'BOK-SERV-VAL-018',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if booking_locked.driver_cash_received:
+                return Response(
+                    {'error': 'Cash already marked as received', 'code': 'BOK-SERV-VAL-019'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            booking_locked.driver_cash_received = True
+            booking_locked.driver_cash_received_at = timezone.now()
+            booking_locked.payment_status = Booking.PaymentStatus.FULLY_PAID
+            booking_locked.save(update_fields=[
+                'driver_cash_received',
+                'driver_cash_received_at',
+                'payment_status',
+            ])
+
+            BookingHistory.objects.create(
+                booking=booking_locked,
+                old_status=booking_locked.status,
+                new_status=booking_locked.status,
+                reason=f'Cash payment received: ₹{booking_locked.remaining_amount}',
+                created_by=request.user,
+            )
+
+        booking.refresh_from_db()
         return Response(
             BookingDetailSerializer(booking, context={'request': request}).data,
         )
@@ -672,3 +747,268 @@ class CouponViewSet(viewsets.ModelViewSet):
             'discount': str(result['discount']),
             'final_amount': str(result['final_amount']),
         })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health_check(request):
+    """
+    Health check endpoint for production monitoring.
+
+    Checks:
+        - Database connectivity (can we query?)
+        - Cashfree API availability (can we reach the gateway?)
+        - Overall system status
+
+    Returns:
+        200 OK if all checks pass
+        503 Service Unavailable if any check fails
+
+    Error Codes:
+        HEALTH-CHECK-DB-001: Database connectivity issue
+        HEALTH-CHECK-API-001: Cashfree API unreachable
+    """
+    from django.db import connection
+    import requests
+
+    checks = {}
+    overall_status = 'healthy'
+    start_time = timezone.now()
+
+    # Check 1: Database connectivity
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        
+        db_latency_ms = (timezone.now() - start_time).total_seconds() * 1000
+        checks['database'] = {
+            'status': 'ok',
+            'latency_ms': round(db_latency_ms, 2),
+        }
+    except Exception as e:
+        logger.error(
+            'health_check_db_failed',
+            extra={
+                'error_code': 'HEALTH-CHECK-DB-001',
+                'error': str(e),
+            },
+        )
+        checks['database'] = {
+            'status': 'error',
+            'error': 'Database connectivity issue',
+        }
+        overall_status = 'unhealthy'
+
+    # Check 2: Cashfree API availability
+    try:
+        app_id = settings.CASHFREE_APP_ID
+        is_test = app_id.startswith('TEST') if app_id else True
+        base_url = (
+            'https://sandbox.cashfree.com/pg'
+            if is_test
+            else 'https://api.cashfree.com/pg'
+        )
+        
+        # Simple HEAD request to check if API is reachable
+        response = requests.head(f'{base_url}/orders', timeout=5)
+        
+        checks['cashfree'] = {
+            'status': 'ok',
+            'mode': 'TEST' if is_test else 'PRODUCTION',
+            'reachable': response.status_code in [200, 400, 401, 403],
+        }
+    except requests.RequestException as e:
+        logger.error(
+            'health_check_cashfree_failed',
+            extra={
+                'error_code': 'HEALTH-CHECK-API-001',
+                'error': str(e),
+            },
+        )
+        checks['cashfree'] = {
+            'status': 'error',
+            'error': 'Cashfree API unreachable',
+        }
+        overall_status = 'unhealthy'
+    except Exception as e:
+        # Configuration error (missing settings)
+        checks['cashfree'] = {
+            'status': 'warning',
+            'error': 'Cashfree not configured',
+        }
+
+    # Response
+    response_data = {
+        'status': overall_status,
+        'checks': checks,
+        'timestamp': timezone.now().isoformat(),
+    }
+
+    return Response(
+        response_data,
+        status=status.HTTP_200_OK if overall_status == 'healthy' else status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+#  PRICE CALCULATOR
+# ═══════════════════════════════════════════════════════════════
+
+
+class GeocodingThrottle(UserRateThrottle):
+    """Limit geocoding/price calculation to 100 per hour per user.
+
+    Prevents abuse of Nominatim and OSRM free-tier APIs.
+    """
+    rate = '100/hour'
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@throttle_classes([GeocodingThrottle])
+def calculate_price(request) -> Response:
+    """Calculate price estimate for a bus charter booking.
+
+    Geocodes addresses (if coordinates not provided), calculates
+    driving distance via OSRM, and returns a full price breakdown.
+
+    Accepts JSON body:
+        {
+            "bus": "<uuid>",
+            "pickup_location": "Jaipur, Rajasthan",
+            "drop_location": "Bharatpur, Rajasthan",
+            "trip_type": "one_way",
+            "pickup_date": "2026-03-15",
+            "return_date": null,
+            "pickup_lat": null,  // Optional, geocoded if null
+            "pickup_lng": null,
+            "drop_lat": null,
+            "drop_lng": null,
+            "estimated_km": null  // Optional, OSRM if null
+        }
+
+    Returns price breakdown:
+        {
+            "distance_km": "156.80",
+            "effective_distance_km": "156.80",
+            "base_fare": "2901.80",
+            "driver_charge": "500.00",
+            "night_charge": "0.00",
+            "toll_estimate": "58.04",
+            "subtotal": "3459.84",
+            "platform_fee": "199.00",
+            "total": "3658.84",
+            "trip_days": 1,
+            "pickup_lat": "26.9124336",
+            "pickup_lng": "75.7872709",
+            "drop_lat": "27.2152062",
+            "drop_lng": "77.4890666"
+        }
+
+    Error Codes:
+        BOK-SERV-API-001: OSRM API failure
+        BOK-SERV-API-002: Geocoding failure
+        BOK-SERV-VAL-014: Invalid location format
+    """
+    serializer = PriceCalculateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    bus = data['bus']
+    estimated_km = data.get('estimated_km')
+
+    from apps.bookings.pricing import calculate_booking_price, calculate_trip_days
+
+    trip_days = calculate_trip_days(
+        pickup_date=data['pickup_date'],
+        return_date=data.get('return_date'),
+        trip_type=data['trip_type'],
+    )
+
+    pickup_lat = data.get('pickup_lat')
+    pickup_lng = data.get('pickup_lng')
+    drop_lat = data.get('drop_lat')
+    drop_lng = data.get('drop_lng')
+
+    # Calculate distance via OSRM if not provided
+    if not estimated_km:
+        from apps.bookings.distance_calculator import get_distance_between_locations
+
+        try:
+            distance_result = get_distance_between_locations(
+                pickup_address=data['pickup_location'],
+                drop_address=data['drop_location'],
+                pickup_lat=pickup_lat,
+                pickup_lng=pickup_lng,
+                drop_lat=drop_lat,
+                drop_lng=drop_lng,
+            )
+        except ValueError as exc:
+            return Response(
+                {'error': str(exc), 'code': 'BOK-SERV-API-001'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        estimated_km = distance_result['distance_km']
+        pickup_lat = distance_result['pickup_lat']
+        pickup_lng = distance_result['pickup_lng']
+        drop_lat = distance_result['drop_lat']
+        drop_lng = distance_result['drop_lng']
+
+    from decimal import Decimal
+    commission_rate = (
+        bus.operator.commission_rate
+        if bus.operator.commission_rate is not None
+        else Decimal('10')
+    )
+
+    pricing = calculate_booking_price(
+        distance_km=Decimal(str(estimated_km)),
+        base_price=bus.base_price or Decimal('0'),
+        price_per_km=bus.price_per_km or Decimal('0'),
+        driver_charge_per_day=bus.driver_charge or Decimal('0'),
+        night_halt_charge=bus.night_charge or Decimal('0'),
+        trip_days=trip_days,
+        trip_type=data['trip_type'],
+        commission_rate=commission_rate,
+    )
+
+    response_data = {
+        'distance_km': str(pricing['distance_km']),
+        'effective_distance_km': str(pricing['effective_distance_km']),
+        'base_fare': str(pricing['base_fare']),
+        'driver_charge': str(pricing['driver_charge']),
+        'night_charge': str(pricing['night_charge']),
+        'toll_estimate': str(pricing['toll_estimate']),
+        'subtotal': str(pricing['subtotal']),
+        'platform_fee': str(pricing['platform_fee']),
+        'total': str(pricing['total']),
+        'trip_days': pricing['trip_days'],
+        'night_count': pricing['night_count'],
+        'pickup_lat': str(pickup_lat) if pickup_lat else None,
+        'pickup_lng': str(pickup_lng) if pickup_lng else None,
+        'drop_lat': str(drop_lat) if drop_lat else None,
+        'drop_lng': str(drop_lng) if drop_lng else None,
+        'bus': {
+            'id': str(bus.id),
+            'name': bus.name,
+            'price_per_km': str(bus.price_per_km),
+            'base_price': str(bus.base_price or 0),
+            'driver_charge': str(bus.driver_charge or 0),
+            'night_charge': str(bus.night_charge or 0),
+        },
+    }
+
+    logger.info(
+        'price_calculated',
+        extra={
+            'bus_id': str(bus.id),
+            'distance_km': str(estimated_km),
+            'total': str(pricing['total']),
+            'trip_type': data['trip_type'],
+            'user_id': str(request.user.id),
+        },
+    )
+
+    return Response(response_data)

@@ -177,6 +177,7 @@ REST_FRAMEWORK = {
         'user': '120/minute',
         'otp': '5/minute',
         'webhook': '120/minute',
+        'geocoding': '100/hour',
     },
 }
 
@@ -215,6 +216,7 @@ SPECTACULAR_SETTINGS = {
 SUPABASE_URL = config('SUPABASE_URL', default='')
 SUPABASE_KEY = config('SUPABASE_KEY', default='')
 FIELD_ENCRYPTION_KEY = config('FIELD_ENCRYPTION_KEY', default='')
+FRONTEND_URL = config('FRONTEND_URL', default='')
 
 # Cloudinary Configuration
 CLOUDINARY_CLOUD_NAME = config('CLOUDINARY_CLOUD_NAME', default='')
@@ -234,9 +236,13 @@ CASHFREE_APP_ID = config('CASHFREE_APP_ID', default='')
 CASHFREE_SECRET_KEY = config('CASHFREE_SECRET_KEY', default='')
 CASHFREE_API_VERSION = config('CASHFREE_API_VERSION', default='2023-08-01')
 
-# MSG91 Configuration (for n8n integration)
+# MSG91 Configuration (Legacy - replaced by Brevo WhatsApp)
 MSG91_API_KEY = config('MSG91_API_KEY', default='')
 MSG91_ROUTE = config('MSG91_ROUTE', default='4')  # Transactional SMS
+
+# Brevo (formerly Sendinblue) - WhatsApp Marketing + Email
+BREVO_API_KEY = config('BREVO_API_KEY', default='')
+BREVO_WHATSAPP_SENDER = config('BREVO_WHATSAPP_SENDER', default='')
 
 # Celery Configuration (Upstash Redis with TLS)
 CELERY_BROKER_URL = config(
@@ -258,10 +264,22 @@ PENDING_BOOKING_EXPIRY_HOURS = config(
     default=24,
     cast=int,
 )
+
+# n8n Webhook Configuration for Notifications
+N8N_WEBHOOK_URL = config('N8N_WEBHOOK_URL', default='')
+
 CELERY_BEAT_SCHEDULE = {
     'expire-pending-bookings-hourly': {
         'task': 'apps.bookings.tasks.expire_pending_bookings',
-        'schedule': 3600.0,
+        'schedule': 3600.0,  # Every hour
+    },
+    'send-trip-reminders-hourly': {
+        'task': 'apps.common.tasks.send_trip_reminders',
+        'schedule': 3600.0,  # Every hour
+    },
+    'cleanup-old-notifications-daily': {
+        'task': 'apps.common.tasks.cleanup_old_notifications',
+        'schedule': 86400.0,  # Every 24 hours
     },
 }
 

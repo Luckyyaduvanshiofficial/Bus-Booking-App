@@ -10,7 +10,7 @@ import logging
 from functools import lru_cache
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -102,7 +102,20 @@ class AuthService:
                 user.supabase_uid = resp.user.id
                 user.save(update_fields=['supabase_uid'])
 
-            token, _ = Token.objects.get_or_create(user=user)
+            # Serialize token rotation per-user to avoid delete/create races
+            # when OTP verification is submitted concurrently.
+            user = CustomUser.objects.select_for_update().get(pk=user.pk)
+            # Always mint a fresh token after successful OTP verification
+            # to avoid returning a stale token that may already be expired.
+            Token.objects.filter(user=user).delete()
+            try:
+                # Nested savepoint so IntegrityError doesn't break
+                # the outer @transaction.atomic on PostgreSQL.
+                with transaction.atomic():
+                    token = Token.objects.create(user=user)
+            except IntegrityError:
+                # Concurrent verify request already created a fresh token.
+                token = Token.objects.get(user=user)
 
             from .serializers import UserSerializer
 

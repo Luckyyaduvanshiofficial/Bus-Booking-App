@@ -312,6 +312,7 @@ NUMBER:
 |------|--------------|-------|----------|
 | DOC-VIEWS-PERM-001 | "Only bus operator can upload documents" | Unauthorized upload | Check bus ownership |
 | DOC-VIEWS-PERM-002 | "Only admins can approve/reject documents" | Non-admin verification | Admin-only action |
+| DOC-VIEWS-PERM-003 | "You can only upload documents for your own buses" | Operator tried uploading for another operator's bus | Use a bus owned by the authenticated operator |
 | DOC-VIEWS-NOTFOUND-001 | "Document not found" | Invalid document_id | Check document exists |
 | DOC-VIEWS-VAL-001 | "File size exceeds 10MB limit" | Large file upload | Compress PDF/image |
 | DOC-VIEWS-VAL-002 | "Invalid file type. Use PDF or JPG/PNG" | Wrong file format | Convert to supported format |

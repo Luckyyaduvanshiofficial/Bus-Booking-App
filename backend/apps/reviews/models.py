@@ -7,11 +7,55 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.conf import settings
+from django.apps import apps
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
 from django.db.models import Avg, Count
+
+
+def _recalculate_operator_rating(operator_id) -> None:
+    """Recompute operator rating using approved bus + operator reviews."""
+    user_model = apps.get_model('users', 'CustomUser')
+    with transaction.atomic():
+        operator = user_model.objects.select_for_update().get(pk=operator_id)
+
+        bus_aggregates = BusReview.objects.filter(
+            operator_id=operator_id,
+            is_approved=True,
+        ).aggregate(
+            avg=Avg('rating_overall'),
+            count=Count('id'),
+        )
+        operator_aggregates = OperatorReview.objects.filter(
+            operator_id=operator_id,
+            is_approved=True,
+        ).aggregate(
+            avg=Avg('overall_rating'),
+            count=Count('id'),
+        )
+
+        bus_count = int(bus_aggregates['count'] or 0)
+        op_count = int(operator_aggregates['count'] or 0)
+        total_count = bus_count + op_count
+
+        if total_count == 0:
+            operator.rating_avg = Decimal('0.0')
+            operator.rating_count = 0
+            operator.save(update_fields=['rating_avg', 'rating_count'])
+            return
+
+        bus_sum = Decimal(str(bus_aggregates['avg'] or 0)) * bus_count
+        op_sum = Decimal(str(operator_aggregates['avg'] or 0)) * op_count
+        weighted_avg = ((bus_sum + op_sum) / Decimal(total_count)).quantize(
+            Decimal('0.1'),
+            rounding=ROUND_HALF_UP,
+        )
+        operator.rating_avg = weighted_avg
+        operator.rating_count = total_count
+        operator.save(update_fields=['rating_avg', 'rating_count'])
 
 
 class BusReview(models.Model):
@@ -160,19 +204,7 @@ class BusReview(models.Model):
 
     def _update_operator_ratings(self):
         """Recalculate operator average rating and count under row lock."""
-        operator_model = type(self.operator)
-        with transaction.atomic():
-            operator = operator_model.objects.select_for_update().get(pk=self.operator_id)
-            aggregates = BusReview.objects.filter(
-                operator_id=self.operator_id,
-                is_approved=True,
-            ).aggregate(
-                avg=Avg('rating_overall'),
-                count=Count('id'),
-            )
-            operator.rating_avg = round(aggregates['avg'] or 0, 1)
-            operator.rating_count = aggregates['count'] or 0
-            operator.save(update_fields=['rating_avg', 'rating_count'])
+        _recalculate_operator_rating(self.operator_id)
 
 
 class OperatorReview(models.Model):
@@ -221,10 +253,49 @@ class OperatorReview(models.Model):
         return f"Review by {self.reviewer} for {self.operator.business_name}"
 
     def save(self, *args, **kwargs) -> None:
-        """Calculate overall rating, validate, and save."""
-        self.overall_rating = round(
-            (self.responsiveness_rating + self.professionalism_rating + self.reliability_rating) / 3,
-            1,
+        """Calculate overall rating, validate, and save.
+
+        Only recalculate operator aggregate when:
+        - Creating a new approved review
+        - The is_approved flag changed (admin moderation)
+        - An approved review's computed overall_rating changed
+        This avoids unnecessary aggregate queries on unrelated edits.
+        """
+        is_new = self.pk is None
+        approval_changed = False
+        old_overall = None
+        if not is_new:
+            try:
+                old = OperatorReview.objects.only(
+                    'is_approved', 'overall_rating',
+                ).get(pk=self.pk)
+                approval_changed = old.is_approved != self.is_approved
+                old_overall = old.overall_rating
+            except OperatorReview.DoesNotExist:
+                is_new = True
+
+        total_score = (
+            self.responsiveness_rating
+            + self.professionalism_rating
+            + self.reliability_rating
         )
+        self.overall_rating = (
+            Decimal(total_score) / Decimal('3')
+        ).quantize(
+            Decimal('0.1'),
+            rounding=ROUND_HALF_UP,
+        )
+
+        rating_changed = (
+            old_overall is not None and old_overall != self.overall_rating
+        )
+
         self.full_clean()
         super().save(*args, **kwargs)
+
+        if (
+            (is_new and self.is_approved)
+            or approval_changed
+            or (self.is_approved and rating_changed)
+        ):
+            _recalculate_operator_rating(self.operator_id)

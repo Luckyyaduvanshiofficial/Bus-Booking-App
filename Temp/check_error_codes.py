@@ -29,6 +29,9 @@ APPS_DIR = os.path.join(BACKEND_DIR, 'apps')
 ERROR_CODE_RE = re.compile(
     r'\b([A-Z]{2,4})-([A-Z]{2,7})-([A-Z]{2,10})-(\d{3})\b'
 )
+SYMBOL_OK = '[OK]'
+SYMBOL_WARN = '[WARN]'
+SYMBOL_ERR = '[ERR]'
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -157,13 +160,13 @@ def main() -> int:
     # Matched
     print(_bold(f"Matched (in registry + code): {len(matched)}"))
     for code in sorted(matched):
-        print(f"  {_green('✓')} {code}")
+        print(f"  {_green(SYMBOL_OK)} {code}")
 
     # Registry-only (dead entries or not yet implemented)
     if in_registry_only:
         print(_bold(f"\n{_yellow('In registry but NOT in code')}: {len(in_registry_only)}"))
         for code in sorted(in_registry_only):
-            print(f"  {_yellow('○')} {code}")
+            print(f"  {_yellow(SYMBOL_WARN)} {code}")
 
     # Code-only (undocumented)
     if in_code_only:
@@ -172,7 +175,7 @@ def main() -> int:
             # Find which file
             locations = [fp for fp, codes in impl_map.items() if code in codes]
             loc_str = ', '.join(locations)
-            print(f"  {_red('✗')} {code}  ({loc_str})")
+            print(f"  {_red(SYMBOL_ERR)} {code}  ({loc_str})")
 
     # Test coverage
     tested_codes = test_codes & impl_codes

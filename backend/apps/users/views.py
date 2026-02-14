@@ -6,6 +6,7 @@ All business logic is delegated to services.py.
 from __future__ import annotations
 
 from django.db.models import QuerySet
+from django.http import Http404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes as perm_classes, throttle_classes
 from rest_framework.exceptions import PermissionDenied
@@ -148,7 +149,7 @@ class UserViewSet(viewsets.ModelViewSet):
         """Admin approves / rejects an operator."""
         try:
             user = self.get_object()
-        except Exception:
+        except Http404:
             # Error Code: USR-VIEWS-NOTFOUND-001
             # Message: User not found
             # Cause: User ID doesn't exist
@@ -266,7 +267,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         if bus and bus.operator != self.request.user and self.request.user.role != 'admin':
             raise PermissionDenied(
                 'You can only upload documents for your own buses.',
-                code='DOC-VIEWS-PERM-001',
+                code='DOC-VIEWS-PERM-003',
             )
         serializer.save(user=self.request.user)
 
@@ -316,3 +317,9 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         """Mark all unread notifications as read."""
         self.get_queryset().filter(is_read=False).update(is_read=True)
         return Response({'status': 'all read'})
+
+    @action(detail=False, methods=['get'])
+    def unread_count(self, request) -> Response:
+        """Get count of unread notifications for authenticated user."""
+        count = self.get_queryset().filter(is_read=False).count()
+        return Response({'unread_count': count})

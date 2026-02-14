@@ -94,6 +94,26 @@ class BookingService:
         # ── Pricing calculation ──
         pricing = BookingService._calculate_pricing(bus, validated_data)
 
+        # ── Payment mode calculation ──
+        payment_mode = validated_data.get('payment_mode', 'online_full')
+        total_amount = pricing['total_amount']
+        
+        if payment_mode == 'online_full':
+            advance_amount = total_amount
+            remaining_amount = Decimal('0')
+        elif payment_mode == 'online_advance':
+            advance_amount = min(Decimal('3000'), total_amount)
+            remaining_amount = total_amount - advance_amount
+        elif payment_mode == 'pay_driver':
+            advance_amount = min(Decimal('500'), total_amount)
+            remaining_amount = total_amount - advance_amount
+        else:
+            advance_amount = total_amount
+            remaining_amount = Decimal('0')
+
+        # ── Set expires_at (2 hours from now) ──
+        expires_at = timezone.now() + timedelta(hours=2)
+
         booking = Booking(
             customer=customer,
             operator=bus.operator,
@@ -104,10 +124,13 @@ class BookingService:
             night_charge=pricing['night_charge'],
             toll_estimate=pricing['toll_estimate'],
             platform_fee=pricing['platform_fee'],
-            total_amount=pricing['total_amount'],
+            total_amount=total_amount,
             commission_rate=pricing['commission_rate'],
             commission_amount=pricing['commission_amount'],
             operator_payout=pricing['operator_payout'],
+            advance_amount=advance_amount,
+            remaining_amount=remaining_amount,
+            expires_at=expires_at,
         )
         booking.full_clean()
         booking.save()
@@ -156,48 +179,117 @@ class BookingService:
             created_by=customer,
         )
 
+        # ── Send notifications after commit (avoid side effects inside atomic) ──
+        from apps.common.notification_service import NotificationService
+
+        # Capture values for the on_commit closure
+        _booking_number = booking.booking_number
+        _bus_name = bus.name
+        _pickup_location = booking.pickup_location
+        _drop_location = booking.drop_location
+        _pickup_date_str = booking.pickup_date.strftime("%d %b %Y")
+        _total_amount = booking.total_amount
+        _booking_id = str(booking.id)
+        _customer = customer
+        _operator = bus.operator
+        _customer_name = customer.name
+        _customer_phone = customer.phone
+
+        def _send_booking_created_notifications():
+            # Notify customer via WhatsApp
+            NotificationService.create_notification(
+                user=_customer,
+                notification_type='booking_created',
+                title=f'Booking Created - {_booking_number}',
+                message=(
+                    f'Your booking request has been created.\n\n'
+                    f'📋 Booking: {_booking_number}\n'
+                    f'🚍 Bus: {_bus_name}\n'
+                    f'📍 Route: {_pickup_location} → {_drop_location}\n'
+                    f'📅 Date: {_pickup_date_str}\n'
+                    f'💰 Amount: ₹{_total_amount}\n\n'
+                    f'Waiting for operator confirmation...'
+                ),
+                metadata={'booking_id': _booking_id},
+                send_whatsapp=True,
+                send_email=False
+            )
+            # Notify operator via WhatsApp + Email
+            NotificationService.create_notification(
+                user=_operator,
+                notification_type='booking_created',
+                title=f'New Booking Request - {_booking_number}',
+                message=(
+                    f'New booking request received.\n\n'
+                    f'📋 Booking: {_booking_number}\n'
+                    f'👤 Customer: {_customer_name}\n'
+                    f'📞 Phone: {_customer_phone}\n'
+                    f'📍 Route: {_pickup_location} → {_drop_location}\n'
+                    f'📅 Date: {_pickup_date_str}\n'
+                    f'💰 Amount: ₹{_total_amount}\n\n'
+                    f'Please respond within 2 hours.'
+                ),
+                metadata={'booking_id': _booking_id},
+                send_whatsapp=True,
+                send_email=True
+            )
+
+        transaction.on_commit(_send_booking_created_notifications)
+
         return booking
 
     @staticmethod
     def _calculate_pricing(bus: Bus, validated_data: dict) -> dict:
         """Calculate full pricing breakdown for a booking.
 
+        Uses the charter bus pricing formula from pricing.py:
+            base_fare = max(base_price, price_per_km × distance)
+            + driver charge × trip_days
+            + night halt × (trip_days - 1)
+            + toll estimate (2% of base)
+            + platform fee (max ₹199, 3% of subtotal)
+
         Returns:
             Dict with base_amount, driver_charge, night_charge,
             toll_estimate, platform_fee, total_amount,
             commission_rate, commission_amount, operator_payout.
         """
+        from apps.bookings.pricing import calculate_booking_price, calculate_trip_days
+
         estimated_km = validated_data.get('estimated_km') or Decimal('0')
-        base_price = bus.base_price or Decimal('0')
-        distance_charge = Decimal(str(estimated_km)) * (bus.price_per_km or Decimal('0'))
-        driver_charge = bus.driver_charge or Decimal('0')
-        night_charge = bus.night_charge or Decimal('0')
-        toll_estimate = Decimal('0')
+        trip_type = validated_data.get('trip_type', 'one_way')
+        pickup_date = validated_data.get('pickup_date')
+        return_date = validated_data.get('return_date')
 
-        TWO_PLACES = Decimal('0.01')
-
-        subtotal = base_price + distance_charge + driver_charge + night_charge + toll_estimate
-        platform_fee = (subtotal * Decimal('0.05')).quantize(TWO_PLACES)
+        trip_days = calculate_trip_days(pickup_date, return_date, trip_type)
 
         commission_rate = (
             bus.operator.commission_rate
             if bus.operator.commission_rate is not None
             else Decimal('10')
         )
-        commission_amount = (subtotal * commission_rate / 100).quantize(TWO_PLACES)
-        operator_payout = (subtotal - commission_amount).quantize(TWO_PLACES)
-        total_amount = (subtotal + platform_fee).quantize(TWO_PLACES)
+
+        pricing = calculate_booking_price(
+            distance_km=Decimal(str(estimated_km)),
+            base_price=bus.base_price or Decimal('0'),
+            price_per_km=bus.price_per_km or Decimal('0'),
+            driver_charge_per_day=bus.driver_charge or Decimal('0'),
+            night_halt_charge=bus.night_charge or Decimal('0'),
+            trip_days=trip_days,
+            trip_type=trip_type,
+            commission_rate=commission_rate,
+        )
 
         return {
-            'base_amount': (base_price + distance_charge).quantize(TWO_PLACES),
-            'driver_charge': driver_charge,
-            'night_charge': night_charge,
-            'toll_estimate': toll_estimate,
-            'platform_fee': platform_fee,
-            'total_amount': total_amount,
-            'commission_rate': commission_rate,
-            'commission_amount': commission_amount,
-            'operator_payout': operator_payout,
+            'base_amount': pricing['base_fare'],
+            'driver_charge': pricing['driver_charge'],
+            'night_charge': pricing['night_charge'],
+            'toll_estimate': pricing['toll_estimate'],
+            'platform_fee': pricing['platform_fee'],
+            'total_amount': pricing['total'],
+            'commission_rate': pricing['commission_rate'],
+            'commission_amount': pricing['commission_amount'],
+            'operator_payout': pricing['operator_payout'],
         }
 
     @staticmethod
@@ -241,11 +333,28 @@ class BookingService:
             booking.status = 'confirmed'
             booking.operator_response = 'accepted'
             booking.operator_response_at = timezone.now()
+            booking.rejection_reason = ''
+            booking.cancelled_at = None
+            update_fields = [
+                'status',
+                'operator_response',
+                'operator_response_at',
+                'rejection_reason',
+                'cancelled_at',
+            ]
         elif new_status == 'rejected':
             booking.status = 'cancelled_by_operator'
             booking.operator_response = 'rejected'
             booking.operator_response_at = timezone.now()
             booking.rejection_reason = reason
+            booking.cancelled_at = timezone.now()
+            update_fields = [
+                'status',
+                'operator_response',
+                'operator_response_at',
+                'rejection_reason',
+                'cancelled_at',
+            ]
             AvailabilityBlock.objects.filter(booking=booking).delete()
         else:
             # Error Code: BOK-SERV-VAL-002
@@ -257,7 +366,7 @@ class BookingService:
                 code='BOK-SERV-VAL-002',
             )
 
-        booking.save()
+        booking.save(update_fields=update_fields)
 
         BookingHistory.objects.create(
             booking=booking,
@@ -266,6 +375,73 @@ class BookingService:
             reason=reason,
             created_by=responded_by,
         )
+        
+        # ── Send notifications after commit ──
+        from apps.common.notification_service import NotificationService
+
+        # Capture values for closure
+        _booking_number = booking.booking_number
+        _bus_name = booking.bus.name
+        _customer = booking.customer
+        _pickup_date_str = booking.pickup_date.strftime("%d %b %Y")
+        _booking_id = str(booking.id)
+        _total_amount = booking.total_amount
+        _advance_amount = booking.advance_amount
+        _remaining_amount = booking.remaining_amount
+        _operator_name = booking.operator.business_name or booking.operator.name
+        _operator_phone = booking.operator.phone
+        _pickup_location = booking.pickup_location
+        _pickup_time_str = booking.pickup_time.strftime("%I:%M %p")
+
+        if new_status == 'confirmed':
+            def _send_confirmed_notification():
+                NotificationService.create_notification(
+                    user=_customer,
+                    notification_type='booking_confirmed',
+                    title=f'✅ Booking Confirmed - {_booking_number}',
+                    message=(
+                        f'Great news! Your booking has been confirmed.\n\n'
+                        f'📋 Booking: {_booking_number}\n'
+                        f'🚍 Bus: {_bus_name}\n'
+                        f'👤 Operator: {_operator_name}\n'
+                        f'📞 Contact: {_operator_phone}\n'
+                        f'📍 Pickup: {_pickup_location}\n'
+                        f'📅 Date: {_pickup_date_str}\n'
+                        f'🕒 Time: {_pickup_time_str}\n'
+                        f'💰 Total: ₹{_total_amount}\n'
+                        f'💳 Paid: ₹{_advance_amount}\n'
+                        f'💵 Remaining: ₹{_remaining_amount}\n\n'
+                        f'We will send you a reminder before your trip. Have a safe journey!'
+                    ),
+                    metadata={'booking_id': _booking_id},
+                    send_whatsapp=True,
+                    send_email=True
+                )
+            transaction.on_commit(_send_confirmed_notification)
+        elif new_status == 'rejected':
+            _rejection_reason = reason or 'No reason provided'
+            def _send_rejected_notification():
+                NotificationService.create_notification(
+                    user=_customer,
+                    notification_type='booking_rejected',
+                    title=f'❌ Booking Rejected - {_booking_number}',
+                    message=(
+                        f'Unfortunately, your booking request has been rejected.\n\n'
+                        f'📋 Booking: {_booking_number}\n'
+                        f'🚍 Bus: {_bus_name}\n'
+                        f'📅 Date: {_pickup_date_str}\n\n'
+                        f'Reason: {_rejection_reason}\n\n'
+                        f'We apologize for the inconvenience. Please try booking another bus or contact us for assistance.'
+                    ),
+                    metadata={
+                        'booking_id': _booking_id,
+                        'rejection_reason': _rejection_reason
+                    },
+                    send_whatsapp=True,
+                    send_email=True
+                )
+            transaction.on_commit(_send_rejected_notification)
+        
         return booking
 
     @staticmethod
@@ -296,12 +472,22 @@ class BookingService:
         """
         booking = Booking.objects.select_for_update().get(pk=booking.pk)
 
-        non_cancellable = ('completed', 'cancelled_by_customer', 'cancelled_by_operator')
-        if booking.status in non_cancellable:
+        # Use state machine guard
+        if not booking.can_cancel():
             # Error Code: BOK-SERV-CONFLICT-002
             # Message: Cannot cancel this booking
             # Cause: Booking is already completed or cancelled
             # Solution: Only pending or confirmed bookings can be cancelled
+            logger.warning(
+                'booking_cancel_attempt_invalid_state',
+                extra={
+                    'error_code': 'BOK-SERV-CONFLICT-002',
+                    'booking_id': str(booking.id),
+                    'booking_number': booking.booking_number,
+                    'current_status': booking.status,
+                    'cancelled_by_id': str(cancelled_by.id),
+                },
+            )
             raise ValidationError(
                 'Cannot cancel this booking.',
                 code='BOK-SERV-CONFLICT-002',
@@ -329,10 +515,44 @@ class BookingService:
         else:
             new_status = Booking.Status.CANCELLED_BY_CUSTOMER
 
-        booking.status = new_status
+        # Calculate refund eligibility
+        captured_total = Payment.objects.filter(
+            booking=booking,
+            status=Payment.CfStatus.CAPTURED,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        refund_amount = Decimal('0.00')
+        if captured_total > 0:
+            refund_amount = min(
+                booking.calculate_refund(),
+                captured_total,
+            ).quantize(Decimal('0.01'))
+
+        # Phase 1: Mark refund intent (inside DB transaction)
+        if refund_amount > 0:
+            booking.payment_status = Booking.PaymentStatus.REFUND_PENDING
+            logger.info(
+                'booking_refund_marked_pending',
+                extra={
+                    'booking_id': str(booking.id),
+                    'booking_number': booking.booking_number,
+                    'refund_amount': str(refund_amount),
+                    'captured_total': str(captured_total),
+                },
+            )
+        
+        # Use state machine transition
+        booking.transition_to(new_status)
         booking.cancellation_reason = normalized_reason
         booking.cancelled_at = timezone.now()
-        booking.save()
+        booking.refund_amount = refund_amount
+        update_fields = [
+            'status',
+            'cancellation_reason',
+            'cancelled_at',
+            'refund_amount',
+            'payment_status',
+        ]
+        booking.save(update_fields=update_fields)
 
         # Free blocked dates
         AvailabilityBlock.objects.filter(booking=booking).delete()
@@ -344,6 +564,26 @@ class BookingService:
             reason=normalized_reason,
             created_by=cancelled_by,
         )
+        
+        logger.info(
+            'booking_cancelled',
+            extra={
+                'booking_id': str(booking.id),
+                'booking_number': booking.booking_number,
+                'old_status': old_status,
+                'new_status': new_status,
+                'cancelled_by_id': str(cancelled_by.id),
+                'refund_amount': str(refund_amount),
+            },
+        )
+        
+        # Phase 2: Schedule refund processing (outside DB lock)
+        if refund_amount > 0:
+            PaymentService.schedule_booking_refund_post_commit(
+                booking_id=booking.id,
+                amount=refund_amount,
+                reason=normalized_reason,
+            )
         return booking
 
     @staticmethod
@@ -371,24 +611,22 @@ class BookingService:
 
         old_status = booking.status
         completed_at = timezone.now()
-        updated = Booking.objects.filter(
-            pk=booking.pk,
-            status='confirmed',
-        ).update(
-            status='completed',
-            completed_at=completed_at,
-        )
-        if updated != 1:
-            # Error Code: BOK-SERV-CONFLICT-003
-            # Message: Only confirmed bookings can be completed
-            # Cause: Booking status is not 'confirmed'
-            # Solution: Confirm the booking first before marking complete
-            raise ValidationError(
-                'Only confirmed bookings can be completed.',
-                code='BOK-SERV-CONFLICT-003',
-            )
-        booking.status = 'completed'
+        
+        # Use state machine transition
+        booking.transition_to(Booking.Status.COMPLETED)
         booking.completed_at = completed_at
+        booking.save(update_fields=['status', 'completed_at'])
+        
+        logger.info(
+            'booking_completed',
+            extra={
+                'booking_id': str(booking.id),
+                'booking_number': booking.booking_number,
+                'old_status': old_status,
+                'completed_by_id': str(completed_by.id),
+                'operator_id': str(booking.operator.id),
+            },
+        )
 
         # Atomic increments using F() expressions to prevent race conditions
         CustomUser.objects.filter(pk=booking.customer.pk).update(
@@ -472,20 +710,44 @@ class PaymentService:
                 booking.total_amount * Decimal('0.3')
             ).quantize(Decimal('0.01'))
 
+        # Generate idempotency key to prevent duplicate payments
+        idempotency_key = f"booking-{booking.id}-{payment_type}"
+        
+        logger.info(
+            'payment_initiation_started',
+            extra={
+                'booking_id': str(booking.id),
+                'booking_number': booking.booking_number,
+                'payment_type': payment_type,
+                'amount': str(amount),
+                'idempotency_key': idempotency_key,
+            },
+        )
+
         try:
             payment = Payment.objects.create(
                 booking=booking,
                 amount=amount,
                 payment_type=payment_type,
                 payment_method=payment_method,
+                idempotency_key=idempotency_key,
             )
         except IntegrityError:
+            # Idempotency key or unique constraint violation
             existing_pending = Payment.objects.filter(
                 booking=booking,
                 status='created',
                 payment_type=payment_type,
             ).first()
             if existing_pending:
+                logger.info(
+                    'payment_already_exists',
+                    extra={
+                        'booking_id': str(booking.id),
+                        'payment_id': str(existing_pending.id),
+                        'idempotency_key': idempotency_key,
+                    },
+                )
                 return existing_pending
             raise ValidationError(
                 'Race condition detected. Please retry.',
@@ -567,7 +829,10 @@ class PaymentService:
                     'customer_email': customer.email or '',
                 },
                 'order_meta': {
-                    'return_url': f'{settings.SUPABASE_URL}/payment/return?order_id={{order_id}}',
+                    'return_url': (
+                        f"{(getattr(settings, 'FRONTEND_URL', '') or getattr(settings, 'SUPABASE_URL', '')).rstrip('/')}"
+                        "/payment/return?order_id={order_id}"
+                    ),
                 },
             }
 
@@ -620,6 +885,324 @@ class PaymentService:
                 'Payment gateway unavailable. Please try again.',
                 code='PAY-SERV-API-001',
             )
+
+    @staticmethod
+    def create_refund_record(
+        *,
+        booking: Booking,
+        source_payment: Payment,
+        amount: Decimal,
+        reason: str = '',
+    ) -> Payment:
+        """Create refund payment and attempt gateway refund using two-phase commit.
+        
+        Phase 1: Create REFUND_PENDING record in DB (inside transaction)
+        Phase 2: Call external gateway API (outside transaction lock)
+        Phase 3: Update to REFUNDED or REFUND_FAILED based on gateway response
+        """
+        normalized_amount = amount.quantize(Decimal('0.01'))
+        existing_refund = PaymentService._find_existing_refund_for_source_payment(
+            booking=booking,
+            source_payment=source_payment,
+            amount=normalized_amount,
+        )
+        if existing_refund:
+            logger.info(
+                'refund_already_exists',
+                extra={
+                    'booking_id': str(booking.id),
+                    'refund_payment_id': str(existing_refund.id),
+                    'amount': str(normalized_amount),
+                },
+            )
+            return existing_refund
+
+        # Phase 1: Create refund record with REFUND_PENDING status (inside DB lock)
+        refund_payment = Payment.objects.create(
+            booking=booking,
+            amount=normalized_amount,
+            payment_type=Payment.PaymentType.REFUND,
+            payment_method=source_payment.payment_method,
+            status=Payment.CfStatus.REFUND_PENDING,  # Two-phase: mark intent first
+            metadata={
+                'source_payment_id': str(source_payment.id),
+                'refund_reason': reason,
+            },
+        )
+        
+        logger.info(
+            'refund_marked_pending',
+            extra={
+                'booking_id': str(booking.id),
+                'refund_payment_id': str(refund_payment.id),
+                'source_payment_id': str(source_payment.id),
+                'amount': str(normalized_amount),
+            },
+        )
+
+        # Phase 2: Call external gateway API (now outside DB transaction lock)
+        # This prevents holding DB locks during network I/O
+        gateway_result = PaymentService._create_cashfree_refund(
+            source_payment=source_payment,
+            refund_payment=refund_payment,
+            refund_amount=normalized_amount,
+            reason=reason,
+        )
+        
+        # Phase 3: Update final status based on gateway response
+        refund_payment.metadata = {
+            **(refund_payment.metadata or {}),
+            'gateway_refund': gateway_result,
+        }
+        if gateway_result.get('success'):
+            refund_payment.status = Payment.CfStatus.REFUNDED
+            logger.info(
+                'refund_gateway_success',
+                extra={
+                    'booking_id': str(booking.id),
+                    'refund_payment_id': str(refund_payment.id),
+                    'amount': str(normalized_amount),
+                },
+            )
+        else:
+            refund_payment.status = Payment.CfStatus.REFUND_FAILED
+            logger.error(
+                'refund_gateway_failed',
+                extra={
+                    'error_code': 'PAY-SERV-API-001',
+                    'booking_id': str(booking.id),
+                    'refund_payment_id': str(refund_payment.id),
+                    'amount': str(normalized_amount),
+                    'gateway_result': gateway_result,
+                },
+            )
+        refund_payment.save(update_fields=['status', 'metadata'])
+        return refund_payment
+
+    @staticmethod
+    def schedule_booking_refund_post_commit(
+        *,
+        booking_id,
+        amount: Decimal,
+        reason: str = '',
+    ) -> None:
+        """Process booking refund only after surrounding DB transaction commits."""
+        normalized_amount = amount.quantize(Decimal('0.01'))
+        if normalized_amount <= Decimal('0.00'):
+            return
+
+        def _refund_after_commit() -> None:
+            try:
+                booking = Booking.objects.get(pk=booking_id)
+                refunded_total = PaymentService.process_booking_refund(
+                    booking=booking,
+                    amount=normalized_amount,
+                    reason=reason,
+                )
+                if (
+                    refunded_total >= normalized_amount
+                    and booking.payment_status != Booking.PaymentStatus.REFUNDED
+                ):
+                    booking.payment_status = Booking.PaymentStatus.REFUNDED
+                    booking.save(update_fields=['payment_status'])
+            except Booking.DoesNotExist:
+                logger.warning(
+                    'Skipped post-commit refund; booking %s no longer exists.',
+                    booking_id,
+                )
+            except Exception:
+                logger.exception(
+                    'Post-commit refund processing failed for booking %s.',
+                    booking_id,
+                )
+                # Do NOT re-raise inside on_commit callback — Django's
+                # signal dispatcher silently swallows it, and it can mask
+                # the real error in logs.
+
+        transaction.on_commit(_refund_after_commit)
+
+    @staticmethod
+    def process_booking_refund(
+        *,
+        booking: Booking,
+        amount: Decimal,
+        reason: str = '',
+    ) -> Decimal:
+        """Refund a booking across captured payments and return total refunded."""
+        remaining = amount.quantize(Decimal('0.01'))
+        if remaining <= Decimal('0.00'):
+            return Decimal('0.00')
+
+        refunded_total = Decimal('0.00')
+        captured_payments = Payment.objects.filter(
+            booking=booking,
+            status=Payment.CfStatus.CAPTURED,
+        ).order_by('-created_at', '-id')
+
+        for source_payment in captured_payments:
+            if remaining <= Decimal('0.00'):
+                break
+
+            already_refunded = PaymentService._refunded_amount_for_source_payment(
+                booking=booking,
+                source_payment=source_payment,
+            )
+            refundable_balance = (
+                source_payment.amount - already_refunded
+            ).quantize(Decimal('0.01'))
+            if refundable_balance <= Decimal('0.00'):
+                continue
+
+            refund_chunk = min(remaining, refundable_balance).quantize(Decimal('0.01'))
+            if refund_chunk <= Decimal('0.00'):
+                continue
+
+            refund_payment = PaymentService.create_refund_record(
+                booking=booking,
+                source_payment=source_payment,
+                amount=refund_chunk,
+                reason=reason,
+            )
+            if refund_payment.status == Payment.CfStatus.REFUNDED:
+                refunded_total += refund_payment.amount
+                remaining = (remaining - refund_payment.amount).quantize(Decimal('0.01'))
+
+        return refunded_total.quantize(Decimal('0.01'))
+
+    @staticmethod
+    def _find_existing_refund_for_source_payment(
+        *,
+        booking: Booking,
+        source_payment: Payment,
+        amount: Decimal,
+    ) -> Optional[Payment]:
+        """Return existing non-failed refund for the same source payment + amount."""
+        source_payment_id = str(source_payment.id)
+        target_amount = amount.quantize(Decimal('0.01'))
+
+        candidate_refunds = Payment.objects.filter(
+            booking=booking,
+            payment_type=Payment.PaymentType.REFUND,
+        ).exclude(
+            status=Payment.CfStatus.FAILED,
+        ).only(
+            'id', 'amount', 'metadata', 'status', 'created_at',
+        ).order_by('-created_at')
+
+        for refund in candidate_refunds:
+            metadata = refund.metadata or {}
+            if str(metadata.get('source_payment_id') or '') != source_payment_id:
+                continue
+            if refund.amount == target_amount:
+                return refund
+        return None
+
+    @staticmethod
+    def _refunded_amount_for_source_payment(
+        *,
+        booking: Booking,
+        source_payment: Payment,
+    ) -> Decimal:
+        """Return total successfully refunded amount for one captured source payment."""
+        source_payment_id = str(source_payment.id)
+        refunded_total = Decimal('0.00')
+
+        refund_rows = Payment.objects.filter(
+            booking=booking,
+            payment_type=Payment.PaymentType.REFUND,
+            status=Payment.CfStatus.REFUNDED,
+        ).only('amount', 'metadata')
+
+        for refund in refund_rows:
+            metadata = refund.metadata or {}
+            if str(metadata.get('source_payment_id') or '') != source_payment_id:
+                continue
+            refunded_total += refund.amount
+
+        return refunded_total.quantize(Decimal('0.01'))
+
+    @staticmethod
+    def _create_cashfree_refund(
+        *,
+        source_payment: Payment,
+        refund_payment: Payment,
+        refund_amount: Decimal,
+        reason: str = '',
+    ) -> dict:
+        """Call Cashfree refund API for a captured payment."""
+        from django.conf import settings
+
+        app_id = settings.CASHFREE_APP_ID
+        secret_key = settings.CASHFREE_SECRET_KEY
+        if not app_id or not secret_key:
+            return {'success': False, 'reason': 'credentials_missing'}
+
+        order_id = source_payment.cf_order_id or str(source_payment.id)
+        if not order_id:
+            return {'success': False, 'reason': 'missing_order_id'}
+
+        try:
+            import requests
+            from requests import RequestException
+        except Exception:
+            logger.exception('Failed to import requests for refund call')
+            return {'success': False, 'reason': 'requests_import_failed'}
+
+        is_test = app_id.startswith('TEST')
+        base_url = (
+            'https://sandbox.cashfree.com/pg'
+            if is_test
+            else 'https://api.cashfree.com/pg'
+        )
+        headers = {
+            'Content-Type': 'application/json',
+            'x-client-id': app_id,
+            'x-client-secret': secret_key,
+            'x-api-version': settings.CASHFREE_API_VERSION,
+        }
+        payload = {
+            'refund_id': str(refund_payment.id),
+            'refund_amount': float(refund_amount),
+            'refund_note': (reason or 'Booking cancellation refund')[:120],
+        }
+
+        try:
+            response = requests.post(
+                f'{base_url}/orders/{order_id}/refunds',
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+        except RequestException as exc:
+            logger.error('Cashfree refund API call failed', exc_info=True)
+            return {
+                'success': False,
+                'reason': 'request_failed',
+                'error': str(exc),
+            }
+
+        if response.status_code in (200, 201, 202):
+            try:
+                data = response.json()
+            except ValueError:
+                data = {}
+            return {
+                'success': True,
+                'status_code': response.status_code,
+                'response': data,
+            }
+
+        logger.error(
+            'Cashfree refund failed: %s %s [PAY-SERV-API-001]',
+            response.status_code,
+            response.text,
+        )
+        return {
+            'success': False,
+            'reason': 'gateway_error',
+            'status_code': response.status_code,
+            'response_text': response.text[:500],
+        }
 
     @staticmethod
     def verify_cashfree_payment_reference(
@@ -797,7 +1380,7 @@ class PaymentService:
         payment.status = 'captured'
         payment.cf_payment_id = cf_payment_id
         payment.metadata = metadata or {}
-        payment.save()
+        payment.save(update_fields=['status', 'cf_payment_id', 'metadata'])
 
         booking = Booking.objects.select_for_update().get(pk=payment.booking_id)
         old_status = booking.status
@@ -818,7 +1401,7 @@ class PaymentService:
         else:
             booking.payment_status = 'advance_paid'
 
-        booking.save()
+        booking.save(update_fields=['payment_status'])
 
         BookingHistory.objects.create(
             booking=booking,
@@ -827,6 +1410,48 @@ class PaymentService:
             reason='Payment confirmed',
             created_by=confirmed_by,
         )
+        
+        # ── Send payment received notification after commit ──
+        from apps.common.notification_service import NotificationService
+
+        # Capture values for the closure — use computed remaining instead of
+        # booking.remaining_amount which may be stale after the update above.
+        _remaining = booking.total_amount - total_paid
+        _booking_number = booking.booking_number
+        _customer = booking.customer
+        _payment_amount = payment.amount
+        _cf_payment_id = cf_payment_id
+        _total_paid = total_paid
+        _total_amount = booking.total_amount
+        _booking_id = str(booking.id)
+        _payment_id = str(payment.id)
+
+        def _send_payment_notification():
+            NotificationService.create_notification(
+                user=_customer,
+                notification_type='payment_received',
+                title=f'💳 Payment Received - {_booking_number}',
+                message=(
+                    f'We have received your payment successfully.\n\n'
+                    f'📋 Booking: {_booking_number}\n'
+                    f'💰 Amount Paid: ₹{_payment_amount}\n'
+                    f'💳 Payment ID: {_cf_payment_id}\n'
+                    f'📅 Date: {timezone.now().strftime("%d %b %Y, %I:%M %p")}\n\n'
+                    f'Total Paid: ₹{_total_paid}\n'
+                    f'Total Amount: ₹{_total_amount}\n'
+                    f'Remaining: ₹{_remaining}\n\n'
+                    f'Thank you for your payment!'
+                ),
+                metadata={
+                    'booking_id': _booking_id,
+                    'payment_id': _payment_id,
+                    'amount': str(_payment_amount)
+                },
+                send_sms=False,
+                send_email=True
+            )
+        transaction.on_commit(_send_payment_notification)
+
         return payment
 
 

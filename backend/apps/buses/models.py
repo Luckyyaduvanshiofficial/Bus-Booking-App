@@ -318,6 +318,10 @@ class AvailabilityBlock(models.Model):
         related_name='blocked_dates',
         help_text='Set when blocked due to a platform booking.',
     )
+    notes: str = models.TextField(
+        blank=True, null=True,
+        help_text='Optional notes for manual blocks (e.g., maintenance details)',
+    )
 
     created_at: dt.datetime = models.DateTimeField(auto_now_add=True)
 

@@ -21,10 +21,10 @@ errors = []
 for f in files:
     try:
         py_compile.compile(f, doraise=True)
-        print(f"✓ {f}")
+        print(f"[OK] {f}")
     except py_compile.PyCompileError as e:
         errors.append((f, str(e)))
-        print(f"✗ {f}: {e}")
+        print(f"[ERR] {f}: {e}")
 
 if errors:
     print(f"\n{len(errors)} file(s) with syntax errors:")

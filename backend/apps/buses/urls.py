@@ -29,13 +29,13 @@ urlpatterns = [
         name='bus-amenity-detail',
     ),
     path(
-        '<uuid:bus_id>/availability/',
+        '<uuid:bus_id>/availability-blocks/',
         AvailabilityBlockViewSet.as_view({'get': 'list', 'post': 'create'}),
-        name='bus-availability',
+        name='bus-availability-blocks',
     ),
     path(
-        '<uuid:bus_id>/availability/<uuid:pk>/',
+        '<uuid:bus_id>/availability-blocks/<uuid:pk>/',
         AvailabilityBlockViewSet.as_view({'delete': 'destroy'}),
-        name='bus-availability-detail',
+        name='bus-availability-block-detail',
     ),
 ]

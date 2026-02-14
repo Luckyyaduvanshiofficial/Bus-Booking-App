@@ -8,6 +8,7 @@ from __future__ import annotations
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.buses.models import Bus
 from .models import Booking, BookingHistory, Coupon, CouponUsage, Payment
 
 
@@ -321,6 +322,81 @@ class CouponSerializer(serializers.ModelSerializer):
             'is_active', 'created_at',
         ]
         read_only_fields = ['id', 'used_count', 'created_at']
+
+
+class PriceCalculateSerializer(serializers.Serializer):
+    """Calculate price estimate before booking.
+
+    Accepts bus ID, locations, and trip details. Returns full
+    price breakdown using OSRM distance or client-provided estimated_km.
+    """
+
+    bus = serializers.PrimaryKeyRelatedField(
+        queryset=Bus.objects.filter(is_active=True, approval_status='approved'),
+        help_text='UUID of the bus to calculate pricing for.',
+    )
+    pickup_location = serializers.CharField(
+        max_length=500,
+        help_text='Pickup address (free text). Used for geocoding if coordinates not provided.',
+    )
+    drop_location = serializers.CharField(
+        max_length=500,
+        help_text='Drop address (free text). Used for geocoding if coordinates not provided.',
+    )
+    pickup_lat = serializers.DecimalField(
+        max_digits=10, decimal_places=7, required=False, allow_null=True,
+    )
+    pickup_lng = serializers.DecimalField(
+        max_digits=10, decimal_places=7, required=False, allow_null=True,
+    )
+    drop_lat = serializers.DecimalField(
+        max_digits=10, decimal_places=7, required=False, allow_null=True,
+    )
+    drop_lng = serializers.DecimalField(
+        max_digits=10, decimal_places=7, required=False, allow_null=True,
+    )
+    trip_type = serializers.ChoiceField(
+        choices=Booking.TripType.choices,
+        help_text="'one_way', 'round_trip', or 'multi_day'.",
+    )
+    pickup_date = serializers.DateField(
+        help_text='Trip start date (YYYY-MM-DD).',
+    )
+    return_date = serializers.DateField(
+        required=False, allow_null=True,
+        help_text='Trip end date for round_trip/multi_day.',
+    )
+    estimated_km = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, allow_null=True,
+        help_text='Optional client-side distance estimate. If not provided, calculated via OSRM.',
+    )
+
+    def validate(self, attrs: dict) -> dict:
+        trip_type = attrs.get('trip_type')
+        return_date = attrs.get('return_date')
+        pickup_date = attrs.get('pickup_date')
+
+        # Error Code: BOK-SERIAL-VAL-010
+        # Message: Pickup date must be today or later
+        # Cause: Client submitted a past date for price calculation
+        # Solution: Provide a future date
+        if pickup_date and pickup_date < timezone.localdate():
+            raise serializers.ValidationError(
+                {'pickup_date': 'Pickup date must be today or later.'},
+                code='BOK-SERIAL-VAL-010',
+            )
+
+        if trip_type in ('round_trip', 'multi_day') and not return_date:
+            raise serializers.ValidationError(
+                {'return_date': 'Return date is required for round trip and multi-day bookings.'},
+                code='BOK-SERIAL-VAL-005',
+            )
+        if return_date and pickup_date and return_date < pickup_date:
+            raise serializers.ValidationError(
+                {'return_date': 'Return date cannot be before pickup date.'},
+                code='BOK-SERIAL-VAL-004',
+            )
+        return attrs
 
 
 class CouponApplySerializer(serializers.Serializer):

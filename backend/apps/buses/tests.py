@@ -469,6 +469,27 @@ class BusViewSetAPITest(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.data), 1)
 
+    def test_operator_my_buses_filter_active(self) -> None:
+        """GET /buses/my_buses/?is_active=true filters out inactive buses."""
+        inactive_bus = Bus(
+            operator=self.operator,
+            name='Inactive Bus',
+            bus_type='mini_bus',
+            seating_capacity=17,
+            registration_number='RJ14MN0098',
+            ac_type='ac',
+            price_per_km=Decimal('20.00'),
+            base_city='Jaipur',
+            is_active=False,
+            approval_status='approved',
+        )
+        inactive_bus.save()
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.op_token.key}')
+        resp = self.client.get('/api/v1/buses/my_buses/?is_active=true')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 1)
+
     def test_admin_approve_bus(self) -> None:
         """POST /buses/{id}/approve/ by admin approves bus."""
         self.bus.approval_status = 'pending'
@@ -518,11 +539,11 @@ class BusViewSetAPITest(APITestCase):
         """Nested availability endpoint should hide foreign operator resources."""
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.other_op_token.key}')
 
-        list_resp = self.client.get(f'/api/v1/buses/{self.bus.id}/availability/')
+        list_resp = self.client.get(f'/api/v1/buses/{self.bus.id}/availability-blocks/')
         self.assertEqual(list_resp.status_code, 200)
         self.assertEqual(list_resp.data['count'], 0)
 
         detail_resp = self.client.delete(
-            f'/api/v1/buses/{self.bus.id}/availability/{self.availability_block.id}/',
+            f'/api/v1/buses/{self.bus.id}/availability-blocks/{self.availability_block.id}/',
         )
         self.assertEqual(detail_resp.status_code, 404)
