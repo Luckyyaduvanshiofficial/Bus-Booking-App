@@ -7,8 +7,9 @@ Raises ValidationError for invalid data.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from functools import lru_cache
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
@@ -16,6 +17,14 @@ from rest_framework.exceptions import ValidationError
 from apps.users.models import CustomUser, Document, Notification
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def get_supabase_client():
+    """Return a cached Supabase client instance."""
+    from supabase import create_client
+
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 
 class AuthService:
@@ -35,13 +44,10 @@ class AuthService:
             ValidationError: If Supabase call fails.
         """
         try:
-            from django.conf import settings
-            from supabase import create_client
-
-            supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+            supabase = get_supabase_client()
             supabase.auth.sign_in_with_otp({'phone': phone})
             return {'message': 'OTP sent successfully'}
-        except Exception as e:
+        except Exception:
             # Error Code: USR-SERV-API-001
             # Message: Failed to send OTP
             # Cause: Supabase Auth API call failed
@@ -68,11 +74,9 @@ class AuthService:
             ValidationError: If OTP verification fails.
         """
         try:
-            from django.conf import settings
-            from supabase import create_client
             from rest_framework.authtoken.models import Token
 
-            supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+            supabase = get_supabase_client()
             resp = supabase.auth.verify_otp({
                 'phone': phone, 'token': otp, 'type': 'sms',
             })
@@ -109,7 +113,7 @@ class AuthService:
             }
         except ValidationError:
             raise
-        except Exception as e:
+        except Exception:
             # Error Code: USR-SERV-AUTH-002
             # Message: OTP verification failed unexpectedly
             # Cause: Supabase Auth error or network issue
@@ -309,12 +313,48 @@ class UserService:
         """
         if action == 'approve':
             user.is_verified = True
-            user.verification_status = 'verified'
-            user.save(update_fields=['is_verified', 'verification_status'])
+            user.verification_status = CustomUser.VerificationStatus.VERIFIED
+            user.rejection_reason = ''
+            user.verified_at = timezone.now()
+            user.save(
+                update_fields=[
+                    'is_verified',
+                    'verification_status',
+                    'rejection_reason',
+                    'verified_at',
+                ],
+            )
+            Notification.objects.create(
+                user=user,
+                type=Notification.NotificationType.OPERATOR_VERIFIED,
+                title='Operator Verification Approved',
+                message='Your operator profile has been verified and activated.',
+                metadata={'verification_status': 'verified'},
+            )
         elif action == 'reject':
-            user.verification_status = 'rejected'
+            user.is_verified = False
+            user.verification_status = CustomUser.VerificationStatus.REJECTED
             user.rejection_reason = reason
-            user.save(update_fields=['verification_status', 'rejection_reason'])
+            user.verified_at = None
+            user.save(
+                update_fields=[
+                    'is_verified',
+                    'verification_status',
+                    'rejection_reason',
+                    'verified_at',
+                ],
+            )
+            Notification.objects.create(
+                user=user,
+                type=Notification.NotificationType.OPERATOR_REJECTED,
+                title='Operator Verification Rejected',
+                message=(
+                    reason.strip()
+                    if reason and reason.strip()
+                    else 'Your operator verification was rejected. Please resubmit documents.'
+                ),
+                metadata={'verification_status': 'rejected'},
+            )
         else:
             # Error Code: USR-SERV-VAL-001
             # Message: Invalid user verification action

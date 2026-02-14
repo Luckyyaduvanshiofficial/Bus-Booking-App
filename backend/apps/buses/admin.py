@@ -1,5 +1,6 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from .models import Bus, BusPhoto, BusAmenity, AvailabilityBlock
+from .services import BusService
 
 
 class BusPhotoInline(admin.TabularInline):
@@ -50,11 +51,27 @@ class BusAdmin(admin.ModelAdmin):
 
     @admin.action(description='Approve selected buses')
     def approve_buses(self, request, queryset):
-        queryset.update(approval_status='approved')
+        approved = 0
+        for bus in queryset.select_related('operator'):
+            BusService.approve_bus(bus=bus, action='approve')
+            approved += 1
+        self.message_user(
+            request,
+            f'Approved {approved} bus(es).',
+            level=messages.SUCCESS,
+        )
 
     @admin.action(description='Reject selected buses')
     def reject_buses(self, request, queryset):
-        queryset.update(approval_status='rejected')
+        rejected = 0
+        for bus in queryset.select_related('operator'):
+            BusService.approve_bus(bus=bus, action='reject')
+            rejected += 1
+        self.message_user(
+            request,
+            f'Rejected {rejected} bus(es).',
+            level=messages.WARNING,
+        )
 
 
 @admin.register(BusPhoto)

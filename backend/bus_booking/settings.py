@@ -4,6 +4,7 @@ Generated on February 12, 2026
 """
 
 import os
+import sys
 from pathlib import Path
 from decouple import config, Csv
 
@@ -14,12 +15,16 @@ import cloudinary.api
 # Build paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_DIR = BASE_DIR.parent
+IS_TESTING = 'test' in sys.argv or 'test_coverage' in sys.argv
 
 # SECURITY WARNING: keep the secret key used in production secret!
+# No default fallback: startup must fail if this is not set.
 SECRET_KEY = config(
     'DJANGO_SECRET_KEY',
-    default='django-insecure-dev-key-change-in-production'
+    default='test-only-secret-key' if IS_TESTING else None,
 )
+if not SECRET_KEY:
+    raise RuntimeError('DJANGO_SECRET_KEY must be set.')
 
 # Runtime environment
 ENVIRONMENT = config('ENVIRONMENT', default='development').strip().lower()
@@ -99,7 +104,10 @@ DATABASES = {
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
         'OPTIONS': {
-            'sslmode': config('DB_SSLMODE', default='prefer'),
+            'sslmode': config(
+                'DB_SSLMODE',
+                default='require' if IS_PRODUCTION else 'prefer',
+            ),
         },
         # Reuse DB connections for 10 minutes to avoid opening a new
         # PostgreSQL connection on every request (Supabase has connection limits)
@@ -108,8 +116,7 @@ DATABASES = {
 }
 
 # Use SQLite for tests – fast, local, no remote DB dependency
-import sys
-if 'test' in sys.argv or 'test_coverage' in sys.argv:
+if IS_TESTING:
     DATABASES['default'] = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'test_db.sqlite3',
@@ -169,6 +176,7 @@ REST_FRAMEWORK = {
         'anon': '60/minute',
         'user': '120/minute',
         'otp': '5/minute',
+        'webhook': '120/minute',
     },
 }
 
@@ -181,17 +189,32 @@ CORS_ALLOWED_ORIGINS = config(
 
 CORS_ALLOW_CREDENTIALS = True
 
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS',
+    default='',
+    cast=lambda value: [
+        origin.strip()
+        for origin in value.split(',')
+        if origin.strip()
+    ],
+)
+
 # Spectacular Settings (API Documentation)
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Bus Booking Platform API',
     'DESCRIPTION': 'REST API for Bus Booking Platform',
     'VERSION': '1.0.0',
-    'SERVE_PERMISSIONS': ['rest_framework.permissions.AllowAny'],
+    'SERVE_PERMISSIONS': (
+        ['rest_framework.permissions.AllowAny']
+        if DEBUG
+        else ['rest_framework.permissions.IsAdminUser']
+    ),
 }
 
 # Supabase Configuration
 SUPABASE_URL = config('SUPABASE_URL', default='')
 SUPABASE_KEY = config('SUPABASE_KEY', default='')
+FIELD_ENCRYPTION_KEY = config('FIELD_ENCRYPTION_KEY', default='')
 
 # Cloudinary Configuration
 CLOUDINARY_CLOUD_NAME = config('CLOUDINARY_CLOUD_NAME', default='')
@@ -230,6 +253,17 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Asia/Kolkata'
 CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': 'CERT_REQUIRED'}
 CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': 'CERT_REQUIRED'}
+PENDING_BOOKING_EXPIRY_HOURS = config(
+    'PENDING_BOOKING_EXPIRY_HOURS',
+    default=24,
+    cast=int,
+)
+CELERY_BEAT_SCHEDULE = {
+    'expire-pending-bookings-hourly': {
+        'task': 'apps.bookings.tasks.expire_pending_bookings',
+        'schedule': 3600.0,
+    },
+}
 
 # ─── Django Cache Backend (Upstash Redis) ─────────────────────────────────────
 UPSTASH_REDIS_URL = config('UPSTASH_REDIS_URL', default='')
@@ -298,6 +332,8 @@ if IS_PRODUCTION:
         insecure_flags.append('SESSION_COOKIE_SECURE must be True')
     if not CSRF_COOKIE_SECURE:
         insecure_flags.append('CSRF_COOKIE_SECURE must be True')
+    if not FIELD_ENCRYPTION_KEY:
+        insecure_flags.append('FIELD_ENCRYPTION_KEY must be set')
     if insecure_flags:
         raise RuntimeError(
             'Production security misconfiguration: ' + '; '.join(insecure_flags),
@@ -364,7 +400,7 @@ JAZZMIN_SETTINGS = {
     "default_icon_parents": "fas fa-chevron-circle-right",
     "default_icon_children": "fas fa-circle",
     "related_modal_active": True,
-    "use_google_fonts_cdn": True,
+    "use_google_fonts_cdn": False,
     "show_ui_builder": False,
 }
 

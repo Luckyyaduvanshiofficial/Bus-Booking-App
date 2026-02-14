@@ -36,10 +36,13 @@ class ReviewService:
         if action == 'approve':
             review.is_approved = True
             review.is_flagged = False
+            update_fields = ['is_approved', 'is_flagged']
         elif action == 'flag':
             review.is_flagged = True
+            update_fields = ['is_flagged']
         elif action == 'remove':
             review.is_approved = False
+            update_fields = ['is_approved']
         else:
             # Error Code: REV-SERV-VAL-001
             # Message: Invalid review moderation action
@@ -50,5 +53,5 @@ class ReviewService:
                 code='REV-SERV-VAL-001',
             )
 
-        review.save()
+        review.save(update_fields=update_fields)
         return review

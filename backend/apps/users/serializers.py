@@ -76,11 +76,26 @@ class OperatorSerializer(serializers.ModelSerializer):
         return DocumentSerializer(obj.documents.all(), many=True).data
 
     def to_representation(self, instance):
-        """Mask bank_account — show only last 4 digits."""
+        """Mask sensitive financial fields in responses."""
         data = super().to_representation(instance)
-        raw = data.get('bank_account') or ''
-        if len(raw) > 4:
-            data['bank_account'] = '****' + raw[-4:]
+
+        bank_account = instance.get_bank_account_plain()
+        if bank_account:
+            if len(bank_account) <= 4:
+                data['bank_account'] = '*' * len(bank_account)
+            else:
+                data['bank_account'] = ('*' * (len(bank_account) - 4)) + bank_account[-4:]
+        else:
+            data['bank_account'] = ''
+
+        pan = instance.get_pan_number_plain()
+        if pan:
+            if len(pan) <= 4:
+                data['pan_number'] = '*' * len(pan)
+            else:
+                data['pan_number'] = ('*' * (len(pan) - 4)) + pan[-4:]
+        else:
+            data['pan_number'] = ''
         return data
 
 

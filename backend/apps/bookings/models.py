@@ -310,9 +310,11 @@ class Booking(models.Model):
         naive_dt = _dt.combine(self.pickup_date, pickup_time)
         pickup_dt = timezone.make_aware(naive_dt, timezone.get_current_timezone())
         hours_until = (pickup_dt - timezone.now()).total_seconds() / 3600
-        if hours_until > 48:
+        if hours_until >= 48:
             return self.total_amount
-        return (self.total_amount * Decimal('0.5')).quantize(Decimal('0.01'))
+        if hours_until >= 24:
+            return (self.total_amount * Decimal('0.5')).quantize(Decimal('0.01'))
+        return Decimal('0.00')
 
 
 class Payment(models.Model):

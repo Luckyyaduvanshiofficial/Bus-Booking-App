@@ -308,15 +308,29 @@ class BookingService:
             )
 
         old_status = booking.status
+        normalized_reason = (reason or '').strip()
+        if not normalized_reason:
+            if cancelled_by.role in (
+                CustomUser.Role.OPERATOR,
+                CustomUser.Role.ADMIN,
+            ):
+                raise ValidationError(
+                    'Cancellation reason is required for operators/admins.',
+                    code='BOK-SERV-VAL-007',
+                )
+            normalized_reason = 'Cancelled by customer'
 
         # Determine correct cancellation status based on who is cancelling
-        if cancelled_by.role in ('operator', 'admin'):
-            new_status = 'cancelled_by_operator'
+        if cancelled_by.role in (
+            CustomUser.Role.OPERATOR,
+            CustomUser.Role.ADMIN,
+        ):
+            new_status = Booking.Status.CANCELLED_BY_OPERATOR
         else:
-            new_status = 'cancelled_by_customer'
+            new_status = Booking.Status.CANCELLED_BY_CUSTOMER
 
         booking.status = new_status
-        booking.cancellation_reason = reason
+        booking.cancellation_reason = normalized_reason
         booking.cancelled_at = timezone.now()
         booking.save()
 
@@ -327,7 +341,7 @@ class BookingService:
             booking=booking,
             old_status=old_status,
             new_status=new_status,
-            reason=reason,
+            reason=normalized_reason,
             created_by=cancelled_by,
         )
         return booking
@@ -608,6 +622,111 @@ class PaymentService:
             )
 
     @staticmethod
+    def verify_cashfree_payment_reference(
+        *,
+        payment: Payment,
+        cf_payment_id: str,
+        expected_amount: Decimal,
+    ) -> dict:
+        """Verify payment reference against Cashfree order payments API."""
+        from django.conf import settings
+        import requests
+
+        app_id = settings.CASHFREE_APP_ID
+        secret_key = settings.CASHFREE_SECRET_KEY
+        if not app_id or not secret_key:
+            raise ValidationError(
+                'Cashfree credentials missing for payment verification.',
+                code='PAY-SERV-CONFIG-001',
+            )
+
+        is_test = app_id.startswith('TEST')
+        base_url = (
+            'https://sandbox.cashfree.com/pg'
+            if is_test
+            else 'https://api.cashfree.com/pg'
+        )
+        headers = {
+            'Content-Type': 'application/json',
+            'x-client-id': app_id,
+            'x-client-secret': secret_key,
+            'x-api-version': settings.CASHFREE_API_VERSION,
+        }
+        order_id = payment.cf_order_id or str(payment.id)
+        response = requests.get(
+            f'{base_url}/orders/{order_id}/payments',
+            headers=headers,
+            timeout=30,
+        )
+        if response.status_code != 200:
+            logger.error(
+                'Cashfree verification failed: %s %s [PAY-SERV-API-001]',
+                response.status_code,
+                response.text,
+            )
+            raise ValidationError(
+                'Unable to verify payment reference with gateway.',
+                code='PAY-SERV-API-001',
+            )
+
+        try:
+            payload = response.json()
+        except ValueError:
+            raise ValidationError(
+                'Gateway verification returned invalid payload.',
+                code='PAY-SERV-API-001',
+            )
+        if isinstance(payload, list):
+            payment_rows = payload
+        elif isinstance(payload, dict):
+            payment_rows = payload.get('data') or payload.get('payments') or []
+        else:
+            payment_rows = []
+
+        matched = None
+        for row in payment_rows:
+            row_payment_id = str(
+                row.get('cf_payment_id')
+                or row.get('payment_id')
+                or '',
+            )
+            if row_payment_id == str(cf_payment_id):
+                matched = row
+                break
+
+        if not matched:
+            raise ValidationError(
+                'Provided payment reference was not found in gateway records.',
+                code='PAY-SERV-VAL-003',
+            )
+
+        gateway_amount = Decimal(
+            str(
+                matched.get('payment_amount')
+                or matched.get('amount')
+                or '0',
+            ),
+        )
+        if abs(gateway_amount - expected_amount) > Decimal('0.01'):
+            raise ValidationError(
+                'Gateway amount does not match expected amount.',
+                code='PAY-SERV-VAL-001',
+            )
+
+        gateway_status = str(
+            matched.get('payment_status')
+            or matched.get('status')
+            or '',
+        ).lower()
+        if gateway_status not in {'success', 'captured', 'paid'}:
+            raise ValidationError(
+                'Gateway payment is not in captured/success state.',
+                code='PAY-SERV-CONFLICT-003',
+            )
+
+        return matched
+
+    @staticmethod
     @transaction.atomic
     def confirm_payment(
         *,
@@ -654,7 +773,10 @@ class PaymentService:
             return payment
 
         # Verify actual amount matches expected amount (prevents underpayment fraud)
-        if actual_amount is not None and actual_amount != payment.amount:
+        if (
+            actual_amount is not None
+            and abs(payment.amount - actual_amount) > Decimal('0.01')
+        ):
             # Error Code: PAY-SERV-VAL-001
             # Message: Payment amount mismatch
             # Cause: Actual paid amount differs from expected booking amount
@@ -816,6 +938,27 @@ class CouponService:
         Returns:
             The created CouponUsage record.
         """
+        coupon = Coupon.objects.select_for_update().get(pk=coupon.pk)
+
+        if not coupon.is_valid:
+            raise ValidationError(
+                'Coupon is expired or exhausted.',
+                code='BOK-SERV-VAL-004',
+            )
+
+        user_uses = CouponUsage.objects.filter(coupon=coupon, user=user).count()
+        if coupon.per_user_limit and user_uses >= coupon.per_user_limit:
+            raise ValidationError(
+                'You have already used this coupon.',
+                code='BOK-SERV-VAL-006',
+            )
+
+        if coupon.usage_limit and coupon.used_count >= coupon.usage_limit:
+            raise ValidationError(
+                'Coupon is expired or exhausted.',
+                code='BOK-SERV-VAL-004',
+            )
+
         # Error Code: BOK-SERV-DB-003
         # Message: Failed to record coupon usage
         # Cause: Database constraint violation when recording coupon usage

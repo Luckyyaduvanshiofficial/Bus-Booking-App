@@ -5,6 +5,7 @@ Each serializer declares explicit fields and uses validate() for business rules.
 
 from __future__ import annotations
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import Booking, BookingHistory, Coupon, CouponUsage, Payment
@@ -209,9 +210,14 @@ class BookingCreateSerializer(serializers.ModelSerializer):
                 {'bus': 'This bus has not been approved yet.'},
                 code='BOK-SERIAL-VAL-002',
             )
+        if bus and (not bus.operator.is_active or not bus.operator.is_verified):
+            raise serializers.ValidationError(
+                {'bus': 'This bus operator is not active/verified.'},
+                code='BOK-SERIAL-VAL-009',
+            )
 
         passenger_count = attrs.get('passenger_count')
-        if passenger_count is not None and passenger_count == 0:
+        if passenger_count is not None and passenger_count < 1:
             raise serializers.ValidationError(
                 {'passenger_count': 'Must be at least 1.'},
                 code='BOK-SERIAL-VAL-006',
@@ -228,6 +234,11 @@ class BookingCreateSerializer(serializers.ModelSerializer):
 
         pickup_date = attrs.get('pickup_date')
         return_date = attrs.get('return_date')
+        if pickup_date and pickup_date < timezone.localdate():
+            raise serializers.ValidationError(
+                {'pickup_date': 'Pickup date must be today or later.'},
+                code='BOK-SERIAL-VAL-010',
+            )
         if pickup_date and return_date and return_date < pickup_date:
             # Error Code: BOK-SERIAL-VAL-004
             # Message: Return date before pickup date

@@ -15,6 +15,7 @@ from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from apps.users.models import CustomUser
 from apps.users.permissions import IsAdmin, IsOperator
 
 from .models import AvailabilityBlock, Bus, BusAmenity, BusPhoto
@@ -47,7 +48,10 @@ class BusOwnershipMixin:
 
     def check_bus_permission(self, bus: Bus) -> None:
         """Raise PermissionDenied if user is not the bus owner or admin."""
-        if bus.operator != self.request.user and self.request.user.role != 'admin':
+        if (
+            bus.operator != self.request.user
+            and self.request.user.role != CustomUser.Role.ADMIN
+        ):
             # Error Code: BUS-VIEWS-PERM-002
             # Message: Not authorized to modify this bus
             # Cause: User is not the bus owner or an admin
@@ -65,7 +69,7 @@ class BusOwnershipMixin:
     def scope_queryset_to_owner_or_admin(self, queryset: QuerySet) -> QuerySet:
         """Restrict nested management endpoints to bus owner/admin only."""
         user = self.request.user
-        if user.role == 'admin':
+        if user.role == CustomUser.Role.ADMIN:
             return queryset
         return queryset.filter(bus__operator=user)
 
@@ -115,8 +119,15 @@ class BusViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
         )
 
         # Public sees only approved buses
-        if not self.request.user.is_authenticated or self.request.user.role == 'customer':
-            qs = qs.filter(approval_status='approved')
+        if (
+            not self.request.user.is_authenticated
+            or self.request.user.role == CustomUser.Role.CUSTOMER
+        ):
+            qs = qs.filter(
+                approval_status=Bus.ApprovalStatus.APPROVED,
+                operator__is_verified=True,
+                operator__is_active=True,
+            )
 
         # Price range
         min_p = self.request.query_params.get('min_price')
@@ -140,7 +151,8 @@ class BusViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer) -> None:
         """Only operators can create buses."""
-        if self.request.user.role != 'operator':
+        user = self.request.user
+        if user.role != CustomUser.Role.OPERATOR:
             # Error Code: BUS-VIEWS-PERM-001
             # Message: Only operators can create buses
             # Cause: Non-operator user attempted to create a bus
@@ -149,7 +161,12 @@ class BusViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
                 "Only operators can create buses.",
                 code='BUS-VIEWS-PERM-001',
             )
-        serializer.save(operator=self.request.user)
+        if not user.is_verified:
+            raise PermissionDenied(
+                "Your operator account must be verified before creating buses.",
+                code='BUS-VIEWS-PERM-003',
+            )
+        serializer.save(operator=user)
 
     def perform_update(self, serializer) -> None:
         """Only the bus owner or admin can update a bus."""
@@ -159,7 +176,8 @@ class BusViewSet(BusOwnershipMixin, viewsets.ModelViewSet):
     def perform_destroy(self, instance) -> None:
         """Only the bus owner or admin can delete a bus."""
         self.check_bus_permission(instance)
-        instance.delete()
+        instance.is_active = False
+        instance.save(update_fields=['is_active', 'updated_at'])
 
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def search(self, request) -> Response:

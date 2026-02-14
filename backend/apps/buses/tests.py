@@ -36,6 +36,8 @@ class BusModelTest(TestCase):
             username='+919100000001',
             name='Bus Operator',
             role='operator',
+            is_verified=True,
+            verification_status='verified',
             business_name='Test Travels',
             commission_rate=Decimal('10.00'),
         )
@@ -114,6 +116,8 @@ class BusPhotoModelTest(TestCase):
         self.operator = CustomUser(
             phone='+919100000002', username='+919100000002',
             role='operator',
+            is_verified=True,
+            verification_status='verified',
         )
         self.operator.set_password('test123')
         self.operator.save(skip_validation=True)
@@ -144,6 +148,8 @@ class AvailabilityBlockModelTest(TestCase):
         self.operator = CustomUser(
             phone='+919100000003', username='+919100000003',
             role='operator',
+            is_verified=True,
+            verification_status='verified',
         )
         self.operator.set_password('test123')
         self.operator.save(skip_validation=True)
@@ -193,6 +199,7 @@ class BusServiceTest(TestCase):
         self.operator = CustomUser(
             phone='+919100000010', username='+919100000010',
             role='operator', business_name='Search Travels',
+            is_verified=True, verification_status='verified',
             commission_rate=Decimal('10.00'),
         )
         self.operator.set_password('test123')
@@ -348,6 +355,7 @@ class BusViewSetAPITest(APITestCase):
         self.operator = CustomUser(
             phone='+919100000020', username='+919100000020',
             name='Operator', role='operator', business_name='View Travels',
+            is_verified=True, verification_status='verified',
             commission_rate=Decimal('10.00'),
         )
         self.operator.set_password('test123')
@@ -373,11 +381,22 @@ class BusViewSetAPITest(APITestCase):
         self.other_operator = CustomUser(
             phone='+919100000023', username='+919100000023',
             name='Other Operator', role='operator', business_name='Other Travels',
+            is_verified=True, verification_status='verified',
             commission_rate=Decimal('10.00'),
         )
         self.other_operator.set_password('test123')
         self.other_operator.save(skip_validation=True)
         self.other_op_token = Token.objects.create(user=self.other_operator)
+
+        self.unverified_operator = CustomUser(
+            phone='+919100000024', username='+919100000024',
+            name='Unverified Operator', role='operator', business_name='Pending Travels',
+            is_verified=False, verification_status='pending',
+            commission_rate=Decimal('10.00'),
+        )
+        self.unverified_operator.set_password('test123')
+        self.unverified_operator.save(skip_validation=True)
+        self.unverified_op_token = Token.objects.create(user=self.unverified_operator)
 
         self.bus = Bus(
             operator=self.operator, name='API Bus', bus_type='mini_bus',
@@ -427,6 +446,17 @@ class BusViewSetAPITest(APITestCase):
         data = {
             'name': 'Bad Bus', 'bus_type': 'mini_bus',
             'seating_capacity': 17, 'registration_number': 'RJ14ZZ9999',
+            'ac_type': 'ac', 'price_per_km': '20.00', 'base_city': 'Delhi',
+        }
+        resp = self.client.post('/api/v1/buses/', data, format='json')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_unverified_operator_cannot_create_bus_perm_003(self) -> None:
+        """BUS-VIEWS-PERM-003: Unverified operators cannot create buses."""
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.unverified_op_token.key}')
+        data = {
+            'name': 'Pending Bus', 'bus_type': 'mini_bus',
+            'seating_capacity': 17, 'registration_number': 'RJ14UV0001',
             'ac_type': 'ac', 'price_per_km': '20.00', 'base_city': 'Delhi',
         }
         resp = self.client.post('/api/v1/buses/', data, format='json')

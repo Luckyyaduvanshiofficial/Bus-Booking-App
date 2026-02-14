@@ -37,6 +37,7 @@ def _create_users():
     operator = CustomUser(
         phone='+919300000002', username='+919300000002',
         name='Rev Operator', role='operator',
+        is_verified=True, verification_status='verified',
         business_name='Rev Travels', commission_rate=Decimal('10.00'),
     )
     operator.set_password('test123')
@@ -118,6 +119,26 @@ class BusReviewModelTest(TestCase):
         )
         self.assertEqual(review.rating_overall, 5)
         self.assertTrue(review.is_approved)
+
+    def test_unapprove_review_resets_bus_rating_counters(self) -> None:
+        """Bus aggregates should reset when approved review becomes unapproved."""
+        review = BusReview.objects.create(
+            booking=self.booking,
+            customer=self.customer,
+            bus=self.bus,
+            operator=self.operator,
+            rating_overall=5,
+            review_text='Excellent bus with great amenities and comfort.',
+        )
+        self.bus.refresh_from_db()
+        self.assertEqual(self.bus.rating_count, 1)
+
+        review.is_approved = False
+        review.save(update_fields=['is_approved'])
+
+        self.bus.refresh_from_db()
+        self.assertEqual(self.bus.rating_count, 0)
+        self.assertEqual(self.bus.rating_avg, Decimal('0.0'))
 
     def test_rev_models_val_001_invalid_rating(self) -> None:
         """REV-MODELS-VAL-001: Rating must be between 1 and 5."""
