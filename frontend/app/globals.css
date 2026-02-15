@@ -1,0 +1,112 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Brand-aligned shadcn variables ─────────────── */
+    /* Background: #F8FAFC → hsl(210 40% 98%) */
+    --background: 210 40% 98%;
+    /* Foreground: slate-900 → hsl(222 47% 11%) */
+    --foreground: 222 47% 11%;
+
+    /* Card: pure white */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Primary: Trust Blue #0B3C5D → hsl(205 80% 20%) */
+    --primary: 205 80% 20%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary: light slate */
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    /* Muted: slate-100 equivalent */
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    /* Accent: Travel Orange #FF6B00 → hsl(25 100% 50%) */
+    --accent: 25 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Destructive */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    /* Borders & inputs */
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+
+    /* Ring: Travel Orange for focus */
+    --ring: 25 100% 50%;
+
+    /* Charts */
+    --chart-1: 205 80% 20%;
+    --chart-2: 25 100% 50%;
+    --chart-3: 43 100% 58%;
+    --chart-4: 215 16% 47%;
+    --chart-5: 210 40% 78%;
+
+    --radius: 0.5rem;
+  }
+
+  /* Dark mode variables preserved for future flexibility */
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 205 70% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 215 28% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 25 100% 50%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 25 100% 50%;
+    --chart-1: 205 70% 50%;
+    --chart-2: 25 100% 55%;
+    --chart-3: 43 100% 62%;
+    --chart-4: 215 20% 65%;
+    --chart-5: 210 40% 78%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ── Utility classes for brand consistency ─────────── */
+@layer utilities {
+  .text-brand-blue {
+    color: #0B3C5D;
+  }
+  .bg-brand-blue {
+    background-color: #0B3C5D;
+  }
+  .text-brand-orange {
+    color: #FF6B00;
+  }
+  .bg-brand-orange {
+    background-color: #FF6B00;
+  }
+  .text-brand-gold {
+    color: #FFC145;
+  }
+}

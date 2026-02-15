@@ -1,19 +1,20 @@
-# Bus Booking Platform - Development Roadmap & Todo List
+# Bus Booking Platform — Development Roadmap & Todo List
 
 **Project:** Bus Charter/Rental Marketplace (NOT RedBus Clone)  
 **Business Model:** Customers rent ENTIRE buses for weddings, religious tours, family trips  
 **Target Launch:** April 2026 (4-6 weeks remaining)  
-**Status:** Backend 70% Complete, Frontend Not Started  
-**Last Updated:** February 14, 2026
+**Status:** Backend ~95% Complete, Frontend ~15% Complete  
+**Last Updated:** February 15, 2026
 
 ---
 
 ## 📊 Project Overview
 
 ```
-Phase 1: Backend Foundation (Week 1-2)        [✅ 70% COMPLETE]
-Phase 1B: Critical Backend Features (Week 3)  [🔴 IN PROGRESS]
-Phase 2: Frontend Foundation (Week 3-4)       [⏳ PENDING]
+Phase 1: Backend Foundation (Week 1-2)        [✅ COMPLETE]
+Phase 1B: Critical Backend Features (Week 3)  [✅ COMPLETE]
+Phase 1B-QA: Code Quality Review              [✅ COMPLETE]
+Phase 2: Frontend Foundation (Week 3-4)       [🔄 45% DONE]
 Phase 3: Core Features (Week 4-5)             [⏳ PENDING]
 Phase 4: Integration & Testing (Week 5-6)     [⏳ PENDING]
 Phase 5: Deployment & Launch (Week 6)         [⏳ PENDING]
@@ -22,849 +23,649 @@ Phase 5: Deployment & Launch (Week 6)         [⏳ PENDING]
 ## ⚠️ IMPORTANT: Charter/Rental Model (NOT Fixed-Route Transport)
 
 **What This Platform IS:**
+
 - Customers book ENTIRE bus (not per-seat like RedBus)
 - Custom routes (pickup/drop defined by customer)
 - Pricing = distance-based + per-day charges + amenities
 - Operator accepts/rejects booking requests
 - Use cases: Weddings (baraat), religious tours, corporate events
 
-**What This Platform IS NOT:**
-- Not fixed-route public transport
-- Not per-seat booking
-- Not instant confirmation (operator must approve)
+---
+
+# ✅ BACKEND — COMPLETE (Phase 1 + 1B + QA)
+
+All backend work is done. See previous version of this file for full Phase 1/1B task details.
+
+**Backend API Summary:**
+| App | Endpoints | Status |
+|-----|-----------|--------|
+| Users | Auth (OTP), Profile, Operators, Documents, Notifications | ✅ |
+| Buses | CRUD, Photos, Amenities, Search, Availability, Date Blocking | ✅ |
+| Bookings | CRUD, Accept/Reject, Cancel, Complete, Payments, Coupons, Price Calc | ✅ |
+| Reviews | Bus Reviews, Operator Reviews, Admin Approval | ✅ |
 
 ---
 
-# 🔧 PHASE 1: BACKEND FOUNDATION
-
-**Duration:** Week 1-2  
-**Status:** [✅] 70% COMPLETE  
-**Completed:** Core models, authentication, basic CRUD, Cashfree integration, reviews
-
-## Tasks
-
-### P1.1: Django Project Setup & Configuration
-- [x] Install Django dependencies from requirements.txt
-- [x] Create Django admin user (superuser)
-- [x] Configure environment variables (.env file)
-- [x] Test database connection (PostgreSQL)
-- [x] Run initial migrations
-- [x] Verify development server runs (http://localhost:8000)
-- [x] Confirm API documentation available at /api/docs
-
-### P1.2: User Authentication System
-- [x] Create CustomUser model with phone-based authentication
-- [x] Implement user roles (customer, operator, admin)
-- [x] Setup Supabase integration for OTP verification
-- [x] Create serializers for user registration/login
-- [x] Build authentication API endpoints
-- [x] Test OTP flow (send & verify)
-- [x] Create user profile endpoints (GET, PUT)
-
-### P1.3: Bus Management Module
-- [x] Create Bus model with all fields from PRD schema
-- [x] Create BusPhoto, BusAmenity, AvailabilityBlock models
-- [x] Build bus serializers (list, detail, operator views)
-- [x] Create bus search API with filters
-- [x] Implement availability checking logic
-- [x] Create operator bus management endpoints
-- [x] Test search with various filters (type, price, amenities)
-
-### P1.4: Booking System
-- [x] Create Booking model with full specification from PRD
-- [x] Create Payment model for Cashfree integration
-- [x] Create BookingHistory model for status tracking
-- [x] Build booking creation logic with pricing calculation
-- [x] Implement booking status workflow
-- [x] Create payment initiation flow (Cashfree integration stub)
-- [x] Test booking creation and validation
-
-### P1.5: Reviews & Ratings
-- [x] Create BusReview and OperatorReview models
-- [x] Implement automatic rating calculation
-- [x] Build review creation API
-- [x] Create review listing API with pagination
-- [x] Test review submission and retrieval
-
-- [x] Implement review approval/flagging (admin)
-### P1.6: Document Management
-- [x] Create Document model for operator documents
-- [x] Build document upload endpoint
-- [x] Implement document verification workflow (admin)
-- [x] Create document listing API
-- [x] Test upload and verification flow
-
-### P1.7: Admin Panel Customization
-- [x] Install django-jazzmin for modern admin UI
-- [x] Customize admin for Users app
-- [x] Customize admin for Buses app
-- [x] Customize admin for Bookings app
-- [x] Customize admin for Reviews app
-- [x] Customize admin for Documents app
-- [x] Test admin panel (login, navigation, CRUD operations)
-
-### P1.8: Testing & Documentation
-- [x] Write unit tests for all models
-- [x] Write API endpoint tests
-- [x] Document all API endpoints
-- [x] Create postman collection for manual testing
-- [x] Test error handling and validation
-- [x] Verify all database migrations work
-
----
-
-# 🚨 PHASE 1B: CRITICAL BACKEND FEATURES (CHARTER/RENTAL SPECIFIC)
-
-**Duration:** Week 3 (1 week)  
-**Status:** [🔴] IN PROGRESS  
-**Priority:** MUST complete before frontend work
-
-## ⚠️ Why These Are Critical
-
-Phase 1 built generic booking infrastructure. Phase 1B adds **charter/rental specific features** that make this platform different from regular bus booking:
-- Distance-based pricing (not fixed prices)
-- Operator acceptance workflow (not instant booking)
-- Custom routes (pickup/drop locations, not fixed routes)
-- Flexible payment modes (advance + cash to driver)
-
----
-
-## Tasks
-
-### 🔴 P1B.1: Distance-Based Pricing Calculator (CRITICAL)
-**Blocks:** All booking logic, frontend pricing display  
-**Priority:** DO THIS FIRST
-
-- [ ] Setup OpenStreetMap OSRM API integration (free, no API key)
-- [ ] Create `bookings/services/distance_calculator.py`
-  - [ ] Geocode addresses to lat/lng using Nominatim
-  - [ ] Calculate driving distance between two locations
-  - [ ] Handle API failures gracefully
-  - [ ] Cache geocoded coordinates in Redis (7-day TTL)
-- [ ] Create `bookings/services/pricing.py`
-  - [ ] Implement charter pricing formula:
-    ```
-    total = max(base_price, price_per_km × distance)
-          + (driver_charge × trip_days)
-          + (night_halt_charge × (trip_days - 1))
-          + toll_estimate + platform_fee
-    ```
-- [ ] Add model migrations:
-  - [ ] Add to `Bus` model: `base_price`, `price_per_km`, `driver_charge`, `night_halt_charge`
-  - [ ] Add to `Booking` model: `pickup_location`, `drop_location`, `trip_type`, `trip_days`, `distance_km`
-- [ ] Create API endpoint: `POST /api/bookings/calculate-price/`
-- [ ] Update `calculate_booking_price()` service to use distance calculator
-- [ ] Write tests:
-  - [ ] Test: Jaipur → Bharatpur (156km) → ~₹3,664
-  - [ ] Test: Round trip doubles distance
-  - [ ] Test: Multi-day adds driver + night charges
-  - [ ] Test: Minimum base_price enforced
-- [ ] Add error codes: `BOK-SERV-API-001`, `BOK-SERV-API-002`, `BOK-SERV-VAL-014`
-
-**Reference:** See `tmp/pmpt.md` Task 1 for detailed implementation
-
----
-
-### 🟡 P1B.2: Operator Accept/Reject Booking Flow (IMPORTANT)
-**Why:** Charter bookings need operator approval (unlike instant confirmation)  
-**Priority:** Second
-
-- [ ] Add model migrations:
-  - [ ] Add to `Booking`: `operator_response`, `operator_response_at`, `rejection_reason`, `expires_at`
-- [ ] Create endpoints:
-  - [ ] `POST /api/bookings/{id}/accept/` (Operator only)
-  - [ ] `POST /api/bookings/{id}/reject/` (Operator only)
-- [ ] Implement business logic:
-  - [ ] On accept: Block bus date, change status to `confirmed`, notify customer
-  - [ ] On reject: Change status to `cancelled_by_operator`, refund advance, notify customer
-  - [ ] On expire (2h timeout): Auto-cancel, refund, send apology
-- [ ] Create Celery task: `expire_pending_bookings()` (runs every 10 minutes)
-- [ ] Add validation:
-  - [ ] Only bus owner can accept/reject
-  - [ ] Cannot accept if already processed
-  - [ ] Cannot accept if bus unavailable
-- [ ] Write tests:
-  - [ ] Test: Operator accepts → Status changes, date blocked
-  - [ ] Test: Operator rejects → Refund initiated
-  - [ ] Test: Timeout expires → Status = expired
-  - [ ] Test: Non-owner cannot accept
-- [ ] Add error codes: `BOK-VIEWS-PERM-005`, `BOK-VIEWS-VAL-015`, `BOK-VIEWS-CONFLICT-003`
-
-**Reference:** See `tmp/pmpt.md` Task 2
-
----
-
-### 🟡 P1B.3: Availability Calendar & Date Blocking (IMPORTANT)
-**Why:** Prevent double-booking, allow operator to block dates for maintenance  
-**Priority:** Third
-
-- [ ] Enhance `AvailabilityBlock` model:
-  - [ ] Add `block_reason` field (booked_platform, booked_external, maintenance, operator_blocked)
-  - [ ] Add `notes` field for operator comments
-  - [ ] Add unique constraint: `['bus', 'blocked_date']`
-- [ ] Create endpoints:
-  - [ ] `GET /api/buses/{id}/availability/?from=2026-03-01&to=2026-05-30`
-  - [ ] `POST /api/buses/{id}/block-dates/` (Operator only)
-  - [ ] `DELETE /api/buses/{id}/unblock-date/{date}/` (Operator only)
-- [ ] Implement logic:
-  - [ ] Show 90-day availability calendar
-  - [ ] Auto-block dates when booking confirmed
-  - [ ] Manual blocking by operator
-- [ ] Write tests:
-  - [ ] Test: Booking confirmed → Date auto-blocked
-  - [ ] Test: Operator blocks date → Shows in calendar
-  - [ ] Test: Concurrent booking attempt → One succeeds, other fails
-- [ ] Add error codes: `BUS-VIEWS-PERM-006`, `BUS-VIEWS-VAL-007`, `BUS-VIEWS-CONFLICT-004`
-
-**Reference:** See `tmp/pmpt.md` Task 3
-
----
-
-### 🟡 P1B.4: Advanced Payment Modes (IMPORTANT)
-**Why:** Charter customers often pay advance online + remaining to driver in cash  
-**Priority:** Fourth
-
-- [ ] Add model migrations:
-  - [ ] Add to `Booking`: `payment_mode`, `advance_amount`, `remaining_amount`, `commission_amount`, `commission_paid`
-- [ ] Implement payment modes:
-  - [ ] `online_full`: 100% paid online
-  - [ ] `online_advance`: ₹3,000 paid online, remaining to driver
-  - [ ] `pay_driver`: ₹500 booking fee, rest to driver
-- [ ] Update `create_booking()` service:
-  - [ ] Calculate advance vs remaining based on mode
-  - [ ] Calculate platform commission (10% of total)
-- [ ] Create endpoint:
-  - [ ] `POST /api/bookings/{id}/mark-paid-to-driver/` (Operator confirms cash received)
-- [ ] Implement refund logic per mode:
-  - [ ] `online_full`: Refund full amount minus commission
-  - [ ] `online_advance`: Refund ₹3,000 only
-  - [ ] `pay_driver`: Refund ₹500 only
-- [ ] Write tests:
-  - [ ] Test: Online full → Full amount captured
-  - [ ] Test: Advance mode → ₹3,000 captured, ₹X marked remaining
-  - [ ] Test: Cancellation → Correct refund per mode
-- [ ] Add error codes: `BOK-SERV-VAL-016`, `PAY-SERV-VAL-003`
-
-**Reference:** See `tmp/pmpt.md` Task 4
-
----
-
-### 🟡 P1B.5: Notification System (SMS + Email via n8n) (IMPORTANT)
-**Why:** Customers and operators need timely updates (booking created, confirmed, rejected, reminders)  
-**Priority:** Fifth
-
-- [ ] Create `notifications/` app:
-  - [ ] Create `Notification` model (user, type, title, message, sms_sent, email_sent, is_read)
-  - [ ] Create serializers and views
-- [ ] Create `core/services/n8n_webhooks.py`:
-  - [ ] Implement `trigger_notification(event_type, data)` function
-  - [ ] Send webhook payload to n8n
-- [ ] Create Celery tasks:
-  - [ ] `send_booking_confirmation(booking_id)`
-  - [ ] `send_booking_rejection(booking_id)`
-  - [ ] `send_trip_reminders()` (runs every hour, sends 6h before trip)
-- [ ] Integrate with booking workflow:
-  - [ ] Booking created → SMS to customer + operator
-  - [ ] Booking confirmed → SMS + email with bus details
-  - [ ] Booking rejected → SMS + email with reason
-  - [ ] Payment received → Receipt email
-- [ ] Create API endpoints:
-  - [ ] `GET /api/notifications/` (List user notifications)
-  - [ ] `POST /api/notifications/{id}/mark-read/`
-- [ ] Write tests:
-  - [ ] Test: Booking created → Notification record created
-  - [ ] Test: n8n webhook called with correct payload
-- [ ] Add error codes: `NOT-SERV-API-001`
-
-**Reference:** See `tmp/pmpt.md` Task 5  
-**Note:** n8n will be configured separately (Phase 4)
-
----
-
-### 🟢 P1B.6: Enhanced Search & Filter API (NICE-TO-HAVE)
-**Why:** Customers need to find buses by city, capacity, amenities, availability  
-**Priority:** Last (can be done during frontend phase if needed)
-
-- [ ] Create `GET /api/buses/search/` with filters:
-  - [ ] Filter by: `base_city`, `min_capacity`, `max_capacity`, `is_ac`, `amenities`
-  - [ ] Check availability on `pickup_date` (exclude blocked buses)
-  - [ ] Filter by price range: `min_price`, `max_price`
-  - [ ] Sort by: `price`, `rating`, `capacity`
-  - [ ] Pagination: 20 per page
-- [ ] Implement query optimization:
-  - [ ] Use `select_related()` and `prefetch_related()` to avoid N+1 queries
-  - [ ] Add database indexes on filtered fields
-- [ ] Write tests:
-  - [ ] Test: Search Jaipur buses → Returns only Jaipur
-  - [ ] Test: Filter AC buses → Returns only is_ac=True
-  - [ ] Test: Availability check → Excludes blocked dates
-  - [ ] Test: Sort by price → Lowest first
-
-**Reference:** See `tmp/pmpt.md` Task 6
-
----
-
-## 📋 Phase 1B Completion Checklist
-
-Before moving to Phase 2 (Frontend), ensure:
-- [ ] All 6 tasks completed and tested
-- [ ] Database migrations applied
-- [ ] Postman collection updated with new endpoints
-- [ ] Error codes registered in `ERROR_REGISTRY.md`
-- [ ] API documentation updated
-- [ ] All tests passing (run `pytest`)
-- [ ] Code follows FAANG-level standards from `copilot-instructions.md`
-
-**Estimated Time:** 5-7 days (1 week)
-
----
-
-# 🎨 PHASE 2: FRONTEND FOUNDATION
+# 🎨 PHASE 2: FRONTEND FOUNDATION [🔄 45% DONE]
 
 **Duration:** Week 3-4  
-**Status:** [⏳] NOT STARTED  
-**Dependency:** Must complete Phase 1B first
+**What's Done:** Design system, API client, layout components, homepage skeleton
 
-## Tasks
+## P2.1: Design System & Config ✅ DONE
 
-### P2.1: Next.js Project Setup
-- [ ] Install dependencies from package.json
-- [ ] Setup TypeScript configuration
-- [ ] Configure Tailwind CSS and PostCSS
-- [ ] Test development server (http://localhost:3000)
-- [ ] Verify hot reload working
-- [ ] Setup environment variables (.env.local)
+- [x] `tailwind.config.ts` — Brand colors (Trust Blue, Travel Orange, Gold), Inter font
+- [x] `globals.css` — HSL CSS variables, brand-aligned palette
+- [x] `next.config.ts` — Cloudinary/Supabase images, API rewrite to Django
+- [x] `layout.tsx` — Inter font, SEO metadata (OG/Twitter), React Query provider
 
-### P2.2: Core Layout & Navigation
-- [ ] Create root layout with proper metadata
-- [ ] Create page layout component
-- [ ] Implement navigation header (with language toggle)
-- [ ] Create footer component
-- [ ] Implement mobile-responsive design
-- [ ] Test layout on mobile, tablet, desktop
-- [ ] Setup PWA manifest and icons
+## P2.2: Core Infrastructure ✅ DONE
 
-### P2.3: Authentication Pages
-- [ ] Create login page with OTP input
-  - [ ] Phone number input field
-  - [ ] OTP send logic
-  - [ ] OTP verification
-  - [ ] Error handling and validation
-- [ ] Create register page
-  - [ ] Form for phone, email, name, role
-  - [ ] Role selection (customer/operator)
-  - [ ] Form validation
-  - [ ] Success message
-- [ ] Integrate Supabase Auth
-- [ ] Test OTP flow end-to-end
+- [x] `types/api.ts` — All backend model TypeScript interfaces (20+ types)
+- [x] `lib/api.ts` — Dual-mode fetch (serverFetch for RSC, apiFetch for client + auth)
+- [x] `lib/constants.ts` — Error messages, amenity icons, booking status badges, routes
+- [x] `lib/providers.tsx` — React Query provider (5min stale, 10min cache)
+- [x] `hooks/useAuth.ts` — Zustand auth store (user, token, signOut)
 
-### P2.4: State Management Setup
-- [ ] Setup Zustand stores:
-  - [ ] useAuthStore (user, isLoggedIn, setUser, logout)
-  - [ ] useSearchStore (search filters)
-  - [ ] useUIStore (language, sidebar state)
-- [ ] Create protected route wrapper
-- [ ] Implement persistent authentication
-- [ ] Test state management
+## P2.3: Layout Components ✅ DONE
 
-### P2.5: API Integration
-- [ ] Create Axios API client with token injection
-- [ ] Create API endpoints wrapper (API.ts)
-- [ ] Implement error handling for API calls
-- [ ] Setup API interceptors (auth, error handling)
-- [ ] Test API client with backend endpoints
-- [ ] Create loading states and error messages
+- [x] `components/layout/Header.tsx` — Sticky nav, brand logo, mobile hamburger
+- [x] `components/layout/Footer.tsx` — 4-column footer (Company, Operators, Routes, Brand)
+- [x] `components/layout/MobileNav.tsx` — Fixed bottom nav (Home/Search/Bookings/Profile)
+- [x] `components/layout/MainContainer.tsx` — max-w-7xl + padding enforcer
+- [x] `components/layout/SectionWrapper.tsx` — py-16 spacing enforcer
 
-### P2.6: Home Page
-- [ ] Create landing page with hero section
-- [ ] Add search bar (basic, will be expanded later)
-- [ ] Create feature cards section
-- [ ] Add how-it-works section
-- [ ] Add testimonials section
-- [ ] Make responsive (mobile-first)
-- [ ] Test on all devices
+## P2.4: Skeleton & Error Handling ✅ DONE
 
-### P2.7: Internationalization (i18n)
-- [ ] Create translation objects for English & Hindi
-- [ ] Setup language toggle in header
-- [ ] Implement language persistence (localStorage)
-- [ ] Translate all UI strings
-- [ ] Test language switching
+- [x] `components/skeletons/SkeletonCard.tsx` — Bus card loading skeleton
+- [x] `components/skeletons/SkeletonSearchForm.tsx` — Search form skeleton
+- [x] `components/skeletons/SkeletonRouteCard.tsx` — Route card skeleton
+- [x] `app/loading.tsx` — Global loading fallback
+- [x] `app/error.tsx` — Global error boundary with retry
+- [x] `app/not-found.tsx` — Custom 404 page
 
-### P2.8: Testing & Polish
-- [ ] Test responsive design on actual mobile device
-- [ ] Verify PWA functionality (installable)
-- [ ] Test performance (Lighthouse)
-- [ ] Fix accessibility issues
-- [ ] Test in different browsers (Chrome, Safari, Firefox)
+## P2.5: SEO Foundation ✅ DONE
+
+- [x] H1 on homepage, semantic HTML structure
+- [x] JSON-LD Organization schema
+- [x] Title template, OG/Twitter meta tags
+- [x] `app/sitemap.ts` — Static route sitemap
+
+## P2.6: Homepage ✅ DONE
+
+- [x] `components/homepage/HeroSection.tsx` — Gradient bg + search card
+- [x] `components/search/SearchForm.tsx` — From/To/Date/Passengers + swap
+- [x] `components/homepage/FeaturesSection.tsx` — 4 trust icon cards
+- [x] `components/homepage/HowItWorksSection.tsx` — 3-step flow
+- [x] `components/homepage/RoutesSection.tsx` — 6 popular Rajasthan routes
+- [x] `components/homepage/TestimonialsSection.tsx` — 3 review cards
+- [x] `components/homepage/OperatorCTASection.tsx` — Operator conversion banner
+- [x] Assembled `app/page.tsx` — All sections composed
+- [x] Deleted starter template files (hero, deploy-button, logos, tutorial)
+
+## P2.7: Authentication Pages ✅ DONE
+
+> **Backend:** `POST /auth/send-otp/`, `POST /auth/verify-otp/`, `POST /auth/register/`
+
+- [x] `lib/validations/auth.ts` — Zod schemas (phone 10-digit, OTP 6-digit, register name+email)
+- [x] `types/api.ts` — Added `SendOtpResponse`, `VerifyOtpResponse`, `RegisterResponse`
+- [x] `lib/api.ts` — Added `sendOtp()`, `verifyOtp()`, `registerUser()`, `getProfile()`
+- [x] `hooks/useAuth.ts` — Rewritten with async auth methods (sendOtp, verifyOtp, register, signOut)
+- [x] `hooks/useAuthGuard.ts` — Protected route hook (redirect + role-based access)
+- [x] `components/auth/LoginPage.tsx` — 3-state phone→OTP→register flow
+  - [x] Phone input with +91 prefix, 10-digit validation
+  - [x] OTP 6-digit auto-focus inputs with paste support, 30s resend countdown
+  - [x] Inline registration for new users (name + email)
+  - [x] Error handling with user-friendly messages
+- [x] `app/auth/login/page.tsx` — Brand-styled login page with SEO metadata
+- [x] `components/layout/Header.tsx` — Dynamic auth state (user dropdown when logged in)
+- [x] Deleted 12 starter template files (login-form, sign-up-form, forgot-password, etc.)
+- [x] Build verified — `npx next build` exit code 0
+
+## P2.8: Internationalization (i18n) ⏳ NOT STARTED
+
+> **PRD:** Hindi + English bilingual support
+
+- [ ] Create translation system (next-intl or custom context)
+- [ ] English translation file (`en.json`)
+- [ ] Hindi translation file (`hi.json`)
+- [ ] Language toggle in Header
+- [ ] Persist language preference
+- [ ] Translate: homepage, search, booking, dashboard, auth pages
+
+## P2.9: Toast Notification System ⏳ NOT STARTED
+
+- [ ] Install shadcn toast (`npx shadcn@latest add toast`)
+- [ ] Create `components/ui/Toaster.tsx` — Global toast container
+- [ ] Wire API error handler to show toast on failure
+- [ ] Success toasts for booking, payment, review actions
 
 ---
 
-# 🔑 PHASE 3: CORE FEATURES IMPLEMENTATION
+# 🔑 PHASE 3: CORE FEATURES [⏳ NOT STARTED]
 
 **Duration:** Week 4-5  
-**Status:** [⏳] NOT STARTED
+**All pages below map directly to backend API endpoints**
 
-## Tasks
+## P3.1: Bus Search & Results Page
 
-### P3.1: Bus Search & Listing
-- [ ] Create bus search page layout
-- [ ] Implement location autocomplete
-- [ ] Build date picker
-- [ ] Create filter panel (type, AC, price, amenities)
-- [ ] Implement advanced search endpoint call
-- [ ] Display search results as cards
-- [ ] Add sorting (price, rating, popularity)
-- [ ] Implement pagination or infinite scroll
-- [ ] Test search with various combinations
+> **Backend:** `POST /buses/search/` (filters: base_city, capacity, ac, amenities, price, rating, availability, sort, pagination)
 
-### P3.2: Bus Detail Page
-- [ ] Create bus detail page layout
-- [ ] Implement image gallery (swipeable on mobile)
-- [ ] Display bus specifications
-- [ ] Show amenities with icons
-- [ ] Display pricing breakdown
-- [ ] Show operator info with verification badge
-- [ ] Display bus reviews (paginated)
-- [ ] Add availability calendar
-- [ ] Create "Book Now" button flow
-- [ ] Test all interactions
+- [ ] `app/search/page.tsx` — Search results page
+- [ ] `app/search/loading.tsx` — Search skeleton loader
+- [ ] `components/search/SearchFilters.tsx` — Filter sidebar/bottom-sheet
+  - [ ] Bus type filter (mini_bus, medium_bus, luxury_coach, tempo_traveller)
+  - [ ] AC/Non-AC toggle
+  - [ ] Price range slider (min/max)
+  - [ ] Capacity range
+  - [ ] Amenities checkboxes (music, pushback, charging, first_aid, etc.)
+  - [ ] Rating filter (min stars)
+  - [ ] Sort dropdown (price_asc, price_desc, rating_desc, capacity_desc, newest)
+- [ ] `components/search/SearchResultCard.tsx` — Bus result card
+  - [ ] Bus image (primary photo)
+  - [ ] Name, operator, verified badge
+  - [ ] Bus type + capacity label
+  - [ ] Amenities icons row
+  - [ ] Rating stars (gold) + review count
+  - [ ] Price per km highlighted in orange
+  - [ ] "View Details" CTA button
+  - [ ] Hover lift animation (hover:-translate-y-1 hover:shadow-md)
+- [ ] `components/search/ActiveFilters.tsx` — Active filter chips with remove
+- [ ] `components/search/NoResults.tsx` — Empty state with suggestions
+- [ ] Pagination component (not infinite scroll — per PRD)
+- [ ] URL-based filter state (query params sync)
+- [ ] Mobile: Bottom sheet filters (not sidebar)
+- [ ] SEO: Dynamic meta title ("Buses from Jaipur to Udaipur | BusBook")
 
-### P3.3: Booking Workflow
-- [ ] Create booking form/modal
-- [ ] Implement passenger details collection
-- [ ] Build trip type selector (one-way, round-trip)
-- [ ] Create special requests textarea
-- [ ] Calculate total price dynamically
-- [ ] Implement coupon code input
-- [ ] Show pricing breakdown
-- [ ] Implement booking submission API call
-- [ ] Handle validation errors
-- [ ] Test complete booking flow
+## P3.2: Bus Detail Page
 
-### P3.4: Customer Dashboard
-- [ ] Create dashboard home page
-- [ ] Display user profile info
-- [ ] Show upcoming bookings (if any)
-- [ ] Create quick action buttons
-- [ ] Display booking history/stats
-- [ ] Add profile edit link
-- [ ] Test navigation to other sections
+> **Backend:** `GET /buses/{id}/`, `GET /buses/{id}/photos/`, `GET /buses/{id}/amenities/`, `GET /buses/{id}/availability/`, `GET /reviews/bus/bus_reviews/?bus_id={id}`
 
-### P3.5: Booking Management (Customer)
-- [ ] Create my bookings page
-- [ ] Display booking list with status
-- [ ] Create booking detail page
-- [ ] Implement cancel booking functionality
-- [ ] Show booking confirmation details
-- [ ] Add print/download receipt functionality
-- [ ] Create review submission flow
-- [ ] Test all booking operations
+- [ ] `app/bus/[id]/page.tsx` — Bus detail page (server component)
+- [ ] `app/bus/[id]/loading.tsx` — Detail page skeleton
+- [ ] `components/bus/BusImageGallery.tsx` — Swipeable image gallery
+  - [ ] Full-width hero image
+  - [ ] Thumbnail strip below
+  - [ ] Lightbox modal on click
+  - [ ] Touch swipe on mobile
+- [ ] `components/bus/BusSpecifications.tsx` — Type, capacity, AC, fuel, make/model, year
+- [ ] `components/bus/BusAmenities.tsx` — Amenity icons with labels (from AMENITY_ICONS map)
+- [ ] `components/bus/BusPricing.tsx` — Price breakdown card
+  - [ ] Price per km (orange, bold)
+  - [ ] Base price
+  - [ ] Driver charge per day
+  - [ ] Night halt charge
+  - [ ] "Get exact quote" CTA → opens booking form
+- [ ] `components/bus/OperatorCard.tsx` — Operator info
+  - [ ] Business name + verified badge (blue bg)
+  - [ ] Rating + total trips
+  - [ ] Member since date
+  - [ ] "Contact via WhatsApp" button
+- [ ] `components/bus/AvailabilityCalendar.tsx` — 90-day calendar
+  - [ ] Green = available, Red = blocked, Gray = past
+  - [ ] Select date → enables booking
+- [ ] `components/bus/BusReviews.tsx` — Paginated reviews
+  - [ ] Star rating breakdown (5-star bar chart)
+  - [ ] Individual review cards with rating, text, date
+  - [ ] Pagination (load more)
+- [ ] `components/bus/BookingCTA.tsx` — Sticky bottom CTA bar (mobile)
+- [ ] SEO: Dynamic meta title ("{Bus Name} — Book on BusBook"), JSON-LD Product schema
 
-### P3.6: Operator Registration Flow
-- [ ] Create multi-step operator registration form
-  - Step 1: Business info (name, type, GST, PAN)
-  - Step 2: Bank details (account, IFSC, name)
-  - Step 3: Document uploads
-  - Step 4: Confirmation
-- [ ] Implement form validation
-- [ ] Create document upload with Cloudinary
-- [ ] Display progress indicator
-- [ ] Handle form submission
-- [ ] Show success message
-- [ ] Test complete flow
+## P3.3: Booking Flow (Multi-Step)
 
-### P3.7: Operator Dashboard
-- [ ] Create operator dashboard home
-- [ ] Display stats (bookings, revenue, rating)
-- [ ] Create quick action buttons
-- [ ] Show upcoming bookings
-- [ ] Create My Buses section
-- [ ] Implement Add New Bus form
-- [ ] Create bus edit functionality
-- [ ] Implement availability calendar
-- [ ] Test operator workflows
+> **Backend:** `POST /bookings/calculate-price/`, `POST /bookings/`, `GET /bookings/{id}/`, coupon validation
 
-### P3.8: Payment Page
-- [ ] Create payment page/modal
-- [ ] Display payment options (UPI, card, net banking, pay driver)
-- [ ] Integrate Cashfree payment gateway
-- [ ] Handle payment response
-- [ ] Implement payment verification
-- [ ] Display payment status
-- [ ] Handle errors and retries
-- [ ] Test payment flow (use Cashfree sandbox)
+- [ ] `app/booking/new/page.tsx` — Booking creation (protected route)
+- [ ] `components/booking/BookingSteps.tsx` — Progress indicator (Step 1-2-3-4)
+- [ ] **Step 1: Trip Details**
+  - [ ] `components/booking/TripDetailsForm.tsx`
+  - [ ] Pickup location (text + geocode)
+  - [ ] Drop location (text + geocode)
+  - [ ] Pickup date (calendar picker)
+  - [ ] Return date (if round trip)
+  - [ ] Pickup time
+  - [ ] Trip type toggle (one_way / round_trip / multi_day)
+  - [ ] Passenger count
+  - [ ] Purpose selector (wedding, religious, family_trip, corporate, school_tour, other)
+  - [ ] Special requests textarea
+  - [ ] Zod validation
+- [ ] **Step 2: Price Estimate**
+  - [ ] `components/booking/PriceBreakdown.tsx`
+  - [ ] Call `calculate-price` API with trip details
+  - [ ] Show: base amount, driver charge, toll estimate, platform fee, total
+  - [ ] Coupon code input + apply button
+  - [ ] Discount display
+  - [ ] Loading skeleton while calculating
+- [ ] **Step 3: Payment Mode Selection**
+  - [ ] `components/booking/PaymentModeSelector.tsx`
+  - [ ] Online Full (100% now) — show full amount
+  - [ ] Online Advance (₹3,000 now + rest to driver) — show split
+  - [ ] Pay to Driver (₹500 booking fee + rest to driver) — show split
+  - [ ] Trust badge: 🔒 "Secure Payment via Cashfree"
+- [ ] **Step 4: Confirmation**
+  - [ ] `components/booking/BookingConfirmation.tsx`
+  - [ ] Summary of trip details + price + payment mode
+  - [ ] "Confirm Booking" CTA → POST /bookings/
+  - [ ] Loading state during submission
+  - [ ] Success: redirect to booking detail page
+  - [ ] Error: show user-friendly message from error code
 
-### P3.9: Reviews & Ratings
-- [ ] Create review submission form
-- [ ] Implement star rating selector
-- [ ] Add review text and photo upload
-- [ ] Create reviews display component
-- [ ] Implement review sorting/filtering
-- [ ] Display overall rating calculation
-- [ ] Test review functionality
+## P3.4: Payment Integration
 
-### P3.10: Admin Dashboard (Basic)
-- [ ] Create admin dashboard page
-- [ ] Display platform stats
-- [ ] Add user management quick links
-- [ ] Create operator verification quick view
-- [ ] Test admin navigation
+> **Backend:** `POST /bookings/{id}/initiate-payment/`, Cashfree webhook
 
----
+- [ ] `components/payment/CashfreeCheckout.tsx` — Cashfree SDK integration
+  - [ ] Initialize Cashfree drop-in UI
+  - [ ] Handle payment success → redirect to booking detail
+  - [ ] Handle payment failure → show retry option
+  - [ ] Handle payment cancel → return to booking
+- [ ] `app/booking/[id]/payment/page.tsx` — Payment page
+  - [ ] Display amount, booking number, trust badges
+  - [ ] Blue/white dominant (secure feel)
+  - [ ] Orange CTA only
+  - [ ] Show payment methods (UPI, Card, Net Banking)
+- [ ] Payment status polling / webhook handling on frontend
+- [ ] Payment receipt display
 
-# 🔗 PHASE 4: INTEGRATION & AUTOMATION
+## P3.5: Customer Dashboard
 
-**Duration:** Week 5-6  
-**Status:** [⏳] NOT STARTED
+> **Backend:** `GET /users/me/`, `GET /bookings/` (filtered by user)
 
-## Tasks
+- [ ] `app/dashboard/page.tsx` — Customer dashboard home
+- [ ] `app/dashboard/layout.tsx` — Customer dashboard layout (sidebar + header)
+- [ ] `components/dashboard/DashboardStats.tsx` — Booking count, upcoming trips, total spent
+- [ ] `components/dashboard/UpcomingTrips.tsx` — Next 3 upcoming bookings
+- [ ] `components/dashboard/QuickActions.tsx` — Search, Profile, Support links
+- [ ] `components/dashboard/RecentActivity.tsx` — Recent booking/notification feed
 
-### P4.1: Cashfree Payment Integration
-- [ ] Setup Cashfree merchant account
-- [ ] Integrate Cashfree SDK on payment page
-- [ ] Implement payment order creation
-- [ ] Handle webhook callbacks from Cashfree
-- [ ] Implement automatic booking confirmation on payment success
-- [ ] Handle payment failures and refunds
-- [ ] Test with Cashfree test cards
-- [ ] Verify payout settlement flow
+## P3.6: Customer — My Bookings
 
-### P4.2: Cloudinary Integration
-- [ ] Setup Cloudinary account and API credentials
-- [ ] Create file upload wrapper component
-- [ ] Implement image upload for bus photos
-- [ ] Implement image upload for documents
-- [ ] Setup image optimization (transformations)
-- [ ] Handle upload errors and retries
-- [ ] Test upload flow
+> **Backend:** `GET /bookings/` (paginated, filtered by status), `GET /bookings/{id}/`, `POST /bookings/{id}/cancel/`
 
-### P4.3: n8n Automation Setup
-- [ ] Setup n8n (self-hosted or cloud)
-- [ ] Create SMS notification workflow (Booking Confirmed)
-  - [ ] Trigger from backend webhook
-  - [ ] Send SMS to customer via MSG91
-  - [ ] Send SMS to operator via MSG91
-  - [ ] Log notification in database
-- [ ] Create SMS notification workflow (Booking Cancelled)
-- [ ] Create Email notification workflow (optional)
-- [ ] Test workflows with real data
-- [ ] Setup webhook endpoint in backend
+- [ ] `app/dashboard/bookings/page.tsx` — Booking list
+- [ ] `components/dashboard/BookingTabs.tsx` — Tabs: All | Upcoming | Completed | Cancelled
+- [ ] `components/dashboard/BookingListItem.tsx` — Booking row/card
+  - [ ] Booking number, route, date, status badge
+  - [ ] Bus name + operator
+  - [ ] Amount + payment status
+  - [ ] Action buttons (View, Cancel, Review)
+- [ ] `app/dashboard/bookings/[id]/page.tsx` — Booking detail
+  - [ ] Full trip details
+  - [ ] Price breakdown
+  - [ ] Payment history (from payment records)
+  - [ ] Operator contact info
+  - [ ] Cancel button (with confirmation modal + reason)
+  - [ ] Download receipt (PDF generation)
+- [ ] Status badge color mapping (pending=yellow, confirmed=green, cancelled=red, completed=blue)
+- [ ] Loading skeletons for list + detail
+- [ ] Empty state ("No bookings yet" with search CTA)
+- [ ] Pagination (20 per page)
 
-### P4.4: Email Integration
-- [ ] Configure email service (SendGrid or AWS SES)
-- [ ] Create email templates for notifications:
-  - [ ] Booking confirmation email
-  - [ ] Payment receipt email
-  - [ ] Booking cancellation email
-  - [ ] Review reminder email
-- [ ] Implement email sending in backend
-- [ ] Test email delivery
+## P3.7: Customer — Profile & Settings
 
-### P4.5: WhatsApp Integration (Optional)
-- [ ] Setup WhatsApp Cloud API (if budget allows)
-- [ ] Create WhatsApp templates
-- [ ] Implement WhatsApp message sending
-- [ ] Test WhatsApp flow
-- [ ] Alternative: Direct WhatsApp link (current implementation)
+> **Backend:** `GET /users/me/`, `PUT /users/update_profile/`
 
-### P4.6: Google Maps Integration (Optional for MVP)
-- [ ] Setup Google Maps API
-- [ ] Implement location autocomplete
-- [ ] Implement distance calculator
-- [ ] Implement route display on detail page
-- [ ] Test location features
+- [ ] `app/dashboard/profile/page.tsx` — Profile page
+  - [ ] Avatar upload (Cloudinary)
+  - [ ] Edit name, email, city, address
+  - [ ] Phone display (read-only — primary identifier)
+  - [ ] Preferred language toggle (Hindi/English)
+  - [ ] Account deletion request
+- [ ] Form validation with Zod
+- [ ] Success/error toast on save
 
-### P4.7: SMS Gateway Integration (MSG91)
-- [ ] Setup MSG91 account
-- [ ] Configure OTP templates
-- [ ] Implement SMS sending for booking confirmations
-- [ ] Test SMS delivery
-- [ ] Setup fallback SMS provider
+## P3.8: Customer — Notifications
 
-### P4.8: Monitoring & Logging
-- [ ] Setup error tracking (Sentry)
-- [ ] Implement request logging
-- [ ] Setup uptime monitoring
-- [ ] Create analytics events
-- [ ] Test logging and monitoring
+> **Backend:** `GET /notifications/`, `POST /notifications/{id}/mark-read/`
 
----
+- [ ] `app/dashboard/notifications/page.tsx` — Notifications list
+- [ ] `components/dashboard/NotificationItem.tsx` — Notification card
+  - [ ] Icon by type (booking, payment, review)
+  - [ ] Title + message
+  - [ ] Timestamp (relative: "2 hours ago")
+  - [ ] Read/unread indicator
+  - [ ] Click → navigate to related booking
+- [ ] Mark all as read button
+- [ ] Notification bell in Header with unread count badge
+- [ ] Pagination
 
-# ✅ PHASE 5: TESTING & OPTIMIZATION
+## P3.9: Customer — Submit Review
 
-**Duration:** Week 6  
-**Status:** [⏳] NOT STARTED
+> **Backend:** `POST /reviews/bus/`, `POST /reviews/operator/`
 
-## Tasks
-
-### P5.1: Unit Testing
-- [ ] Write tests for all Django models
-- [ ] Write tests for all serializers
-- [ ] Write tests for business logic (pricing, availability)
-- [ ] Write tests for authentication
-- [ ] Achieve 80%+ code coverage for critical paths
-- [ ] Run tests and fix failures
-
-### P5.2: Integration Testing
-- [ ] Test complete booking flow (end-to-end)
-- [ ] Test payment flow with Cashfree sandbox
-- [ ] Test operator registration flow
-- [ ] Test search and filtering
-- [ ] Test notification flows
-- [ ] Test review submission and approval
-
-### P5.3: API Testing
-- [ ] Create Postman collection with all endpoints
-- [ ] Test all request/response formats
-- [ ] Test error handling and validation
-- [ ] Test authentication and authorization
-- [ ] Test rate limiting (if implemented)
-- [ ] Test pagination and filtering
-
-### P5.4: Frontend Testing
-- [ ] Test all UI components
-- [ ] Test form validation
-- [ ] Test API error handling
-- [ ] Test responsive design on actual devices
-- [ ] Test accessibility (keyboard navigation, screen readers)
-- [ ] Test with slow network (throttle in DevTools)
-- [ ] Test browser compatibility
-
-### P5.5: Performance Optimization
-- [ ] Optimize database queries (N+1 problems)
-- [ ] Add database indexes where needed
-- [ ] Optimize images (Cloudinary compression)
-- [ ] Implement caching (Redis if needed)
-- [ ] Optimize frontend bundle size
-- [ ] Implement lazy loading for images
-- [ ] Test Core Web Vitals (LCP, FID, CLS)
-
-### P5.6: Security Audit
-- [ ] Check SQL injection vulnerabilities
-- [ ] Check XSS vulnerabilities
-- [ ] Check CSRF protection
-- [ ] Verify authentication token security
-- [ ] Check sensitive data handling (phone, payment info)
-- [ ] Verify API authorization on all endpoints
-- [ ] Check rate limiting on public endpoints
-- [ ] Verify HTTPS usage everywhere
-
-### P5.7: Load Testing
-- [ ] Test with simulated concurrent users (100+ simultaneous)
-- [ ] Monitor response times under load
-- [ ] Check for memory leaks
-- [ ] Test database connection pooling
-- [ ] Monitor server resource usage
-
-### P5.8: User Acceptance Testing (UAT)
-- [ ] Create test scenarios for each user role
-- [ ] Document expected vs actual behavior
-- [ ] Test on production-like environment
-- [ ] Get feedback from stakeholders
-- [ ] Fix any discovered issues
+- [ ] `components/reviews/ReviewForm.tsx` — Review submission form
+  - [ ] Star rating selectors (overall, cleanliness, punctuality, driver, value)
+  - [ ] Review text textarea
+  - [ ] Photo upload (optional, up to 3)
+  - [ ] Submit button
+  - [ ] Zod validation (min 1 star, optional text)
+- [ ] Modal trigger from booking detail page
+- [ ] Success toast + close modal
 
 ---
 
-# 🚀 PHASE 6: DEPLOYMENT & LAUNCH
+## P3.10: Operator Registration Flow
 
-**Duration:** Week 6-7  
-**Status:** [⏳] NOT STARTED
+> **Backend:** `POST /auth/register/` (role=operator), `POST /documents/`, `GET /operators/registration-status/`
 
-## Tasks
+- [ ] `app/operator/register/page.tsx` — Multi-step operator registration
+- [ ] `components/operator/registration/BusinessInfoForm.tsx` — Step 1
+  - [ ] Business name, type, GST, PAN, address, city
+- [ ] `components/operator/registration/BankDetailsForm.tsx` — Step 2
+  - [ ] Account number, IFSC, beneficiary name
+- [ ] `components/operator/registration/DocumentUploadForm.tsx` — Step 3
+  - [ ] Aadhar, PAN, bank proof upload (Cloudinary)
+  - [ ] File type + size validation
+  - [ ] Upload progress indicator
+- [ ] `components/operator/registration/RegistrationConfirmation.tsx` — Step 4
+  - [ ] Summary of submitted info
+  - [ ] "Pending verification" status
+  - [ ] Timeline: submitted → under review → verified
+- [ ] Progress bar (Step 1 → 2 → 3 → 4)
+- [ ] Form persistence (don't lose data on refresh)
+- [ ] Zod validation per step
 
-### P6.1: Backend Deployment (Heroku)
-- [ ] Create Heroku app for Django backend
-- [ ] Configure environment variables on Heroku
-- [ ] Setup PostgreSQL database on Heroku
-- [ ] Configure Django settings for production
-- [ ] Setup SSL/HTTPS
-- [ ] Run migrations on production database
-- [ ] Create production superuser
-- [ ] Test API endpoints on production
-- [ ] Setup error monitoring (Sentry)
-- [ ] Setup logging and monitoring
-- [ ] Configure auto-scaling if needed
+## P3.11: Operator Dashboard
 
-### P6.2: Frontend Deployment (Vercel)
-- [ ] Create Vercel account
-- [ ] Connect GitHub repository
-- [ ] Configure environment variables on Vercel
-- [ ] Setup custom domain (if available)
-- [ ] Configure SSL/HTTPS
-- [ ] Setup automatic deployments on git push
-- [ ] Test frontend on production
-- [ ] Configure analytics (Google Analytics)
-- [ ] Setup error monitoring (Sentry)
+> **Backend:** `GET /operators/dashboard/`, `GET /operators/earnings/`
 
-### P6.3: Database Setup
-- [ ] Migrate to production database (Heroku PostgreSQL or Supabase)
-- [ ] Setup automated backups
-- [ ] Configure connection pooling
-- [ ] Monitor database performance
-- [ ] Setup replication (if needed)
+- [ ] `app/operator/dashboard/page.tsx` — Operator dashboard home
+- [ ] `app/operator/dashboard/layout.tsx` — Operator layout (different sidebar from customer)
+- [ ] `components/operator/DashboardStats.tsx` — Revenue, bookings, rating, pending requests
+- [ ] `components/operator/EarningsChart.tsx` — Monthly earnings graph
+- [ ] `components/operator/PendingBookings.tsx` — Bookings needing accept/reject
+- [ ] `components/operator/UpcomingTrips.tsx` — Confirmed upcoming trips
 
-### P6.4: DNS & Domain Configuration
-- [ ] Register domain (if not done)
-- [ ] Configure DNS records
-- [ ] Setup SSL certificates (auto via Vercel/Heroku)
-- [ ] Test domain access
+## P3.12: Operator — My Buses
 
-### P6.5: Third-Party Integrations (Production)
-- [ ] Setup production Cashfree merchant account
-- [ ] Setup production Cloudinary account
-- [ ] Setup production MSG91 account
-- [ ] Setup production n8n (or use n8n.io)
-- [ ] Configure all API keys on deployed apps
+> **Backend:** `GET /buses/my_buses/`, `POST /buses/`, `PUT /buses/{id}/`, `DELETE /buses/{id}/`, `POST /buses/{id}/photos/`, `POST /buses/{id}/amenities/`, `GET /buses/{id}/availability/`, `POST /buses/{id}/block-dates/`, `DELETE /buses/{id}/unblock-date/{date}/`
 
-### P6.6: Monitoring & Alerting
-- [ ] Setup Sentry for error tracking
-- [ ] Setup uptime monitoring
-- [ ] Configure email alerts for critical errors
-- [ ] Setup performance monitoring
-- [ ] Create dashboard for key metrics
+- [ ] `app/operator/buses/page.tsx` — Bus list
+- [ ] `components/operator/BusList.tsx` — List of operator's buses
+  - [ ] Bus card: photo, name, registration, status, rating, trip count
+  - [ ] Status: Active / Pending Approval / Rejected
+  - [ ] Actions: Edit, Calendar, Deactivate
+- [ ] `app/operator/buses/new/page.tsx` — Add new bus form
+  - [ ] `components/operator/BusForm.tsx` — Bus creation/edit form
+  - [ ] Fields: name, type, capacity, registration, make/model, year, AC type, fuel
+  - [ ] Pricing: base_price, price_per_km, driver_charge, night_charge
+  - [ ] Photo upload (up to 10, drag-and-drop, reorder)
+  - [ ] Amenities selector (checkbox grid with icons)
+  - [ ] Base city, base area
+  - [ ] Zod validation
+- [ ] `app/operator/buses/[id]/edit/page.tsx` — Edit bus
+- [ ] `app/operator/buses/[id]/calendar/page.tsx` — Availability calendar
+  - [ ] 90-day calendar view
+  - [ ] Click date to block/unblock
+  - [ ] Show booked dates (from platform)
+  - [ ] Show manually blocked dates
+  - [ ] Add block reason + notes
 
-### P6.7: Documentation
-- [ ] Write deployment guide
-- [ ] Document configuration steps
-- [ ] Write troubleshooting guide
-- [ ] Document API documentation
-- [ ] Create user guides (customer, operator, admin)
+## P3.13: Operator — Booking Management
 
-### P6.8: Launch Preparation
-- [ ] Create launch checklist
-- [ ] Setup support email/chat
-- [ ] Create FAQ section
-- [ ] Prepare marketing materials
-- [ ] Setup analytics and tracking
-- [ ] Train support team
-- [ ] Plan soft launch (beta) period
+> **Backend:** `GET /bookings/` (operator filter), `POST /bookings/{id}/accept/`, `POST /bookings/{id}/reject/`, `POST /bookings/{id}/complete/`, `POST /bookings/{id}/mark-paid-to-driver/`
 
-### P6.9: Soft Launch (Beta)
-- [ ] Deploy to production with limited access
-- [ ] Test with real users (friends, family)
+- [ ] `app/operator/bookings/page.tsx` — Operator booking list
+- [ ] `components/operator/BookingTabs.tsx` — Tabs: Pending | Upcoming | Completed | All
+- [ ] `components/operator/PendingBookingCard.tsx` — Accept/reject card
+  - [ ] Customer name + phone
+  - [ ] Trip details (route, date, passengers, purpose)
+  - [ ] Estimated revenue
+  - [ ] Accept button (green)
+  - [ ] Reject button (red) + reason input modal
+  - [ ] Countdown timer (2h expiry)
+- [ ] `app/operator/bookings/[id]/page.tsx` — Booking detail
+  - [ ] Complete trip details
+  - [ ] Customer contact info
+  - [ ] Payment status + amounts
+  - [ ] "Mark as Completed" button
+  - [ ] "Cash Received from Customer" button (for advance payment mode)
+- [ ] Loading skeletons
+- [ ] Empty state per tab
+
+## P3.14: Operator — Documents
+
+> **Backend:** `GET /documents/`, `POST /documents/`, `GET /documents/{id}/`
+
+- [ ] `app/operator/documents/page.tsx` — Document management
+- [ ] `components/operator/DocumentList.tsx` — Document list with status
+  - [ ] Document type, upload date, status badge
+  - [ ] Verified ✅ / Pending ⏰ / Rejected ❌
+  - [ ] Re-upload button for rejected docs
+  - [ ] Expiry date warning
+- [ ] `components/operator/DocumentUpload.tsx` — Upload form
+  - [ ] Document type selector
+  - [ ] File upload (PDF/image, max 5MB)
+  - [ ] Document number input
+  - [ ] Expiry date input
+  - [ ] Upload progress bar
+
+## P3.15: Operator — Earnings & Payouts
+
+> **Backend:** `GET /operators/earnings/`, `GET /bookings/payments/`
+
+- [ ] `app/operator/earnings/page.tsx` — Earnings page
+- [ ] `components/operator/EarningsSummary.tsx` — Total, this month, pending payout
+- [ ] `components/operator/EarningsTable.tsx` — Transaction history
+  - [ ] Booking number, date, amount, commission, payout, status
+  - [ ] Pagination
+- [ ] `components/operator/PayoutInfo.tsx` — Bank details + next payout date
+
+---
+
+## P3.16: Admin Dashboard (Basic — Django Admin Primary)
+
+> **Backend:** Django Admin at /admin/ handles most admin work. Frontend admin is supplementary.
+
+- [ ] `app/admin/dashboard/page.tsx` — Admin overview
+- [ ] `components/admin/PlatformStats.tsx` — Total users, bookings, revenue, operators
+- [ ] `components/admin/PendingVerifications.tsx` — Operators awaiting verification
+  - [ ] Approve / Reject buttons
+  - [ ] View submitted documents
+- [ ] `components/admin/RecentBookings.tsx` — Latest bookings across platform
+- [ ] `components/admin/FlaggedReviews.tsx` — Reviews needing approval
+  - [ ] Approve / Delete buttons
+- [ ] Admin layout with admin-specific navigation
+
+---
+
+# 🔗 PHASE 4: INTEGRATION & POLISH [⏳ NOT STARTED]
+
+**Duration:** Week 5-6
+
+## P4.1: Cashfree Payment Gateway
+
+- [ ] Setup Cashfree sandbox account
+- [ ] Integrate Cashfree Drop-in SDK
+- [ ] Test UPI, Card, Net Banking flows
+- [ ] Handle webhook for payment confirmation
+- [ ] Handle refund display on booking cancellation
+- [ ] Production config switch
+
+## P4.2: Cloudinary Integration
+
+- [ ] Create Cloudinary upload wrapper component
+- [ ] Bus photo upload (operator)
+- [ ] Document upload (operator)
+- [ ] Avatar upload (all users)
+- [ ] Review photo upload (customer)
+- [ ] Image optimization (auto-format, compression)
+- [ ] Upload progress bars
+
+## P4.3: Location Services
+
+- [ ] Location autocomplete for search (OpenStreetMap Nominatim — free)
+- [ ] Location autocomplete for booking form
+- [ ] Route visualization on bus detail (optional)
+
+## P4.4: PWA Configuration
+
+> **PRD:** Mobile-first PWA
+
+- [ ] `public/manifest.json` — App name, icons, theme color
+- [ ] Service worker setup (next-pwa or custom)
+- [ ] Offline fallback page
+- [ ] Add to homescreen prompt
+- [ ] App icons (192x192, 512x512)
+
+## P4.5: Performance Optimization
+
+- [ ] Lighthouse audit ≥ 90 on all pages
+- [ ] Bundle analysis (next-bundle-analyzer)
+- [ ] Dynamic imports for Framer Motion, Cashfree SDK
+- [ ] Image optimization audit (all images via next/image)
+- [ ] Core Web Vitals: LCP < 2.5s, CLS < 0.1, FID < 100ms
+
+## P4.6: Email Templates
+
+- [ ] Booking confirmation email template
+- [ ] Payment receipt template
+- [ ] Review reminder template
+- [ ] Operator verification status template
+
+## P4.7: WhatsApp Integration
+
+- [ ] WhatsApp click-to-chat link (operator profile, booking detail)
+- [ ] Pre-filled message with booking reference
+
+---
+
+# ✅ PHASE 5: TESTING & SECURITY [⏳ NOT STARTED]
+
+**Duration:** Week 6
+
+## P5.1: Frontend Testing
+
+- [ ] Component unit tests (Jest + React Testing Library)
+- [ ] Form validation tests
+- [ ] API error handling tests
+- [ ] Loading/error state tests
+- [ ] Accessibility audit (axe-core, keyboard nav, screen readers)
+
+## P5.2: Integration Testing
+
+- [ ] Complete booking flow E2E (search → detail → book → pay → confirm)
+- [ ] Operator flow E2E (register → add bus → accept booking)
+- [ ] Auth flow E2E (OTP → login → logout)
+- [ ] Payment flow E2E (initiate → Cashfree sandbox → webhook → confirm)
+
+## P5.3: Cross-Device Testing
+
+- [ ] Mobile (375px, 414px) — iOS Safari, Android Chrome
+- [ ] Tablet (768px, 1024px)
+- [ ] Desktop (1280px, 1440px, 1920px)
+- [ ] Touch interactions on mobile
+- [ ] Bottom sheet filters on mobile
+
+## P5.4: Security Audit
+
+- [ ] No secrets in frontend code
+- [ ] httpOnly cookies for auth tokens
+- [ ] Input sanitization
+- [ ] CSRF protection verified
+- [ ] Rate limiting on sensitive endpoints
+- [ ] Error messages don't expose internals
+
+## P5.5: Performance Testing
+
+- [ ] Lighthouse ≥ 90 all pages
+- [ ] JS bundle < 250kb initial
+- [ ] No N+1 query issues in server components
+- [ ] Image lazy loading verified
+- [ ] Skeleton loading for all async content
+
+---
+
+# 🚀 PHASE 6: DEPLOYMENT & LAUNCH [⏳ NOT STARTED]
+
+**Duration:** Week 6-7
+
+## P6.1: Backend Deployment (Heroku)
+
+- [ ] Create Heroku app, configure env vars
+- [ ] PostgreSQL on Heroku
+- [ ] Production Django settings (DEBUG=False, ALLOWED_HOSTS)
+- [ ] SSL/HTTPS
+- [ ] Run migrations, create superuser
+- [ ] Sentry error tracking
+- [ ] Celery worker dyno
+
+## P6.2: Frontend Deployment (Vercel)
+
+- [ ] Connect GitHub repo to Vercel
+- [ ] Configure env vars (NEXT*PUBLIC_SUPABASE*\*, BACKEND_URL)
+- [ ] Custom domain setup
+- [ ] Preview deployments for PRs
+- [ ] Google Analytics
+
+## P6.3: Production Third-Party Setup
+
+- [ ] Cashfree production merchant account
+- [ ] Cloudinary production account
+- [ ] MSG91 production configuration
+- [ ] n8n webhook configuration
+- [ ] Sentry for frontend + backend
+
+## P6.4: Launch Checklist
+
+- [ ] All pages functional
+- [ ] Payments tested with real cards
+- [ ] OTP flow works on real phones
+- [ ] Error pages styled (404, 500, error boundary)
+- [ ] SEO verified (meta, sitemap, JSON-LD)
+- [ ] Favicon + OG image set
+- [ ] Performance audit passed
+- [ ] Security audit passed
+
+## P6.5: Soft Launch
+
+- [ ] Deploy with limited access
+- [ ] Test with 5-10 real users
 - [ ] Gather feedback
-- [ ] Fix critical issues
-- [ ] Monitor for bugs
+- [ ] Fix critical bugs
+- [ ] Monitor Sentry for errors
 
-### P6.10: Official Launch
-- [ ] Deploy to production (full access)
-- [ ] Announce launch
-- [ ] Monitor 24/7 for issues
-- [ ] Support users
-- [ ] Track key metrics (DAU, bookings, revenue)
+## P6.6: Official Launch
 
----
-
-# 📊 Development Progress Tracker
-
-## Completed Tasks
-
-| Phase | Task | Status | Completion Date | Notes |
-|-------|------|--------|-----------------|-------|
-| Setup | Project Setup | ✅ | Jan 2026 | Django + Next.js structure created |
-| Setup | Documentation | ✅ | Feb 1, 2026 | CONTEXT, PRD, SETUP, ERROR_REGISTRY |
-| Phase 1 | User Authentication | ✅ | Feb 5, 2026 | OTP via Supabase, JWT tokens |
-| Phase 1 | Bus Management | ✅ | Feb 8, 2026 | CRUD, photos, amenities, availability |
-| Phase 1 | Booking System | ✅ | Feb 10, 2026 | Create, cancel, basic validation |
-| Phase 1 | Payment Integration | ✅ | Feb 12, 2026 | Cashfree webhooks, signature validation |
-| Phase 1 | Review System | ✅ | Feb 13, 2026 | Bus & operator reviews, rating aggregation |
-| Phase 1 | Admin Panel | ✅ | Feb 13, 2026 | Jazzmin theme, operator verification |
-
-## Current Phase
-
-**Phase:** Phase 1B - Critical Backend Features  
-**Current Task:** Distance-based pricing calculator (OSRM API integration)  
-**Blockers:** None (ready to implement)  
-**Progress:** 70% Backend Complete | 0% Frontend | 35% Overall
-
-### Phase 1B Tasks Status (Use pmpt.md for implementation guide)
-- [ ] Task 1: Distance Calculator (CRITICAL - DO FIRST)
-- [ ] Task 2: Operator Accept/Reject Flow (IMPORTANT)
-- [ ] Task 3: Availability Calendar (IMPORTANT)
-- [ ] Task 4: Advanced Payment Modes (IMPORTANT)
-- [ ] Task 5: Notification System (IMPORTANT)
-- [ ] Task 6: Enhanced Search API (NICE-TO-HAVE)
-
-### Why Phase 1B Is Critical
-⚠️ **Cannot start frontend without:**
-- Distance calculator → No accurate pricing display
-- Operator workflow → No real booking confirmations
-- Payment modes → Wrong checkout flow
-
-**Estimated Completion:** Feb 21, 2026 (5-7 days)
-
-## Next Steps
-
-1. **Complete Phase 1B** - Use `tmp/pmpt.md` Copilot prompt to implement 6 critical features
-2. **Test Backend** - Run full test suite, update Postman collection
-3. **Start Phase 2** - Initialize Next.js frontend (only after 1B done)
-4. **Follow Phases** - Complete 2 → 3 → 4 → 5 → 6 sequentially
+- [ ] Full production deploy
+- [ ] Monitor for 48 hours
+- [ ] User support plan ready
 
 ---
 
-# 🎯 Quick Reference
+# 📊 Progress Tracker
 
-## Running the App
+| Phase                         | Status         | Completion |
+| ----------------------------- | -------------- | ---------- |
+| Phase 1: Backend Foundation   | ✅ Complete    | 100%       |
+| Phase 1B: Critical Features   | ✅ Complete    | 100%       |
+| Phase 1B-QA: Code Quality     | ✅ Complete    | 100%       |
+| Phase 2: Frontend Foundation  | 🔄 In Progress | ~40%       |
+| Phase 3: Core Features        | ⏳ Pending     | 0%         |
+| Phase 4: Integration & Polish | ⏳ Pending     | 0%         |
+| Phase 5: Testing & Security   | ⏳ Pending     | 0%         |
+| Phase 6: Deployment & Launch  | ⏳ Pending     | 0%         |
+| **Overall Project**           | **🔄**         | **~55%**   |
 
-```bash
-# Backend
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver
+## Frontend Page Count
 
-# Frontend (new terminal)
-cd frontend
-npm install
-npm run dev
-
-# Access
-- Frontend: http://localhost:3000
-- Backend: http://localhost:8000
-- Admin: http://localhost:8000/admin
-- API Docs: http://localhost:8000/api/docs
-```
-
-## Key Files
-
-**Backend:**
-- `backend/bus_booking/settings.py` - Configuration
-- `backend/apps/users/models.py` - User model
-- `backend/apps/buses/models.py` - Bus model
-- `backend/apps/bookings/models.py` - Booking model
-
-**Frontend:**
-- `frontend/lib/api.ts` - API client
-- `frontend/lib/store.ts` - State management
-- `frontend/app/page.tsx` - Home page
-
-## Deployment
-
-- **Backend:** Heroku ($320 free credits)
-- **Frontend:** Vercel (free)
-- **Database:** Supabase PostgreSQL (free tier)
-- **Images:** Cloudinary (free: 25GB)
-
----
-
-# 📝 Notes
-
-- **Business Model:** Charter/rental marketplace (NOT fixed-route public transport)
-- **Booking Type:** Whole bus rental (NOT per-seat booking)
-- **Current Status:** Backend 70% done, Phase 1B critical for launch
-- Total MVP development time: 6-8 weeks (4 weeks remaining)
-- Solo developer (you!)
-- All cloud services have free tiers
-- **Next Critical Step:** Complete Phase 1B before frontend work
-- Launch with MVP features in Phase 1B + 2 + 3
-- Plan v2 for advanced features (chat, live tracking, etc)
+| Category                                | Pages         | Status     |
+| --------------------------------------- | ------------- | ---------- |
+| Homepage                                | 1             | ✅ Done    |
+| Auth (Login, Register)                  | 2             | ⏳         |
+| Search Results                          | 1             | ⏳         |
+| Bus Detail                              | 1             | ⏳         |
+| Booking Flow                            | 2             | ⏳         |
+| Customer Dashboard                      | 5             | ⏳         |
+| Operator Registration                   | 1             | ⏳         |
+| Operator Dashboard                      | 6             | ⏳         |
+| Admin Dashboard                         | 1             | ⏳         |
+| Static (About, Contact, Terms, Privacy) | 4             | ⏳         |
+| Error Pages (404, Error)                | 2             | ✅ Done    |
+| **Total**                               | **~26 pages** | **3 done** |
 
 ---
 
 **Created:** February 12, 2026  
-**Last Updated:** February 14, 2026  
-**Status:** 70% Complete (Phase 1B In Progress)  
+**Last Updated:** February 15, 2026  
+**Status:** Backend ~95% Complete | Frontend ~10% | ~55% Overall  
 **Developer:** You! 🚀

@@ -1,32 +1,72 @@
-import type { Metadata } from 'next';
-import './globals.css';
-import { Providers } from './providers';
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import { ThemeProvider } from "next-themes";
+import { Providers } from "@/lib/providers";
+import "./globals.css";
+
+const inter = Inter({
+  variable: "--font-inter",
+  display: "swap",
+  subsets: ["latin"],
+});
+
+const defaultUrl = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : "http://localhost:3000";
 
 export const metadata: Metadata = {
-  title: 'Bus Booking Platform - Book Your Next Journey',
-  description: 'Book buses for weddings, tours, and group travel in Rajasthan',
-  viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
-  icons: {
-    icon: '/favicon.ico',
+  metadataBase: new URL(defaultUrl),
+  title: {
+    default: "BusBook — Book Buses for Group Travel in Rajasthan",
+    template: "%s | BusBook",
   },
-  manifest: '/manifest.json',
+  description:
+    "Book mini buses, tempo travellers, and luxury coaches for weddings, family trips, and group travel across Rajasthan. Verified operators, secure payments, best prices.",
+  keywords: [
+    "bus booking",
+    "bus hire Rajasthan",
+    "tempo traveller Jaipur",
+    "group travel",
+    "wedding bus",
+    "charter bus",
+    "mini bus rental",
+  ],
+  openGraph: {
+    title: "BusBook — Rajasthan's Trusted Bus Booking Platform",
+    description:
+      "Book verified buses for group travel. Weddings, family trips, pilgrimages. Best prices in Rajasthan.",
+    siteName: "BusBook",
+    type: "website",
+    locale: "en_IN",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "BusBook — Book Buses for Group Travel",
+    description:
+      "Verified operators, secure payments, best prices across Rajasthan.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
-    <html lang="en">
-      <head>
-        <meta name="theme-color" content="#0066CC" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-      </head>
-      <body className="bg-gray-50">
-        <Providers>{children}</Providers>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.variable} font-sans antialiased`}>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          <Providers>{children}</Providers>
+        </ThemeProvider>
       </body>
     </html>
   );

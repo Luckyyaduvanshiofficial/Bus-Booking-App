@@ -1,8 +1,83 @@
-# Copilot Instructions - Bus Booking Platform (FAANG-Level)
+# Copilot Instructions - Bus Booking Platform
 
-**Project:** Django + Next.js Financial Platform  
-**Standards:** Google L6/Meta E6/Stripe Staff Engineer Level  
-**Zero Tolerance:** Security, Race Conditions, Financial Integrity
+**Project:** Django REST + Next.js Bus Rental Booking Platform  
+**Standards:** Production-grade security, race-condition prevention, financial integrity  
+**Database:** PostgreSQL (via Supabase) | **Frontend:** Next.js 14 + TypeScript  
+**Backend:** Django 5.0 + DRF 3.14 | **Task Queue:** Celery + Redis
+
+---
+
+## 🚀 QUICK START
+
+### Backend (Django)
+```bash
+cd backend
+python manage.py runserver       # Start dev server (port 8000)
+python manage.py test            # Run all tests
+python manage.py test apps.users # Test single app
+python manage.py migrate         # Apply migrations
+python manage.py createsuperuser # Create admin
+```
+
+### Frontend (Next.js)
+```bash
+cd frontend
+npm run dev    # Start dev server (port 3000)
+npm run build  # Production build
+npm run lint   # Run ESLint
+```
+
+### Background Tasks
+```bash
+cd backend
+celery -A bus_booking worker -l info          # Start worker
+celery -A bus_booking beat -l info            # Start scheduler
+```
+
+---
+
+## 📁 ARCHITECTURE OVERVIEW
+
+### Monorepo Structure
+```
+Bus Booking app/
+├── backend/              # Django REST API
+│   ├── apps/             # Django apps (users, buses, bookings, reviews, common)
+│   ├── bus_booking/      # Project settings
+│   └── scripts/          # Utility scripts
+├── frontend/             # Next.js app
+│   ├── app/              # App Router pages
+│   ├── components/       # React components
+│   └── lib/              # Utils (api.ts, store.ts, supabase.ts)
+└── Docs/                 # Documentation
+```
+
+### Service Layer Architecture
+**Never bypass the service layer** - all business logic lives in `services.py`:
+- **Serializers** → validate & deserialize input
+- **Views** → orchestrate HTTP requests
+- **Services** → contain all business logic (create, update, delete operations)
+- **Models** → data validation via `clean()` + `save()`
+
+Example flow:
+```python
+View → BookingSerializer → BookingService.create_booking() → Booking.save()
+```
+
+---
+
+### Role-Based System
+- **Customer** (role='customer') - Browse buses, create bookings, leave reviews
+- **Operator** (role='operator') - Manage buses, view their bookings, must be `is_verified=True`
+- **Admin** (role='admin') - Full access via Django admin panel
+
+### Key Features
+- Phone-based OTP authentication (Supabase)
+- Bus search with filters (city, capacity, AC type, bus type)
+- Booking with multiple payment modes (online_full, online_advance, pay_driver)
+- Review system (separate for buses and operators)
+- Document verification for operators
+- Real-time availability management
 
 ---
 
@@ -17,6 +92,89 @@
 - Every permission must be checked twice
 
 **Quality Gate:** "Would this survive a Stripe security audit?"
+
+---
+
+## 🏗️ PROJECT-SPECIFIC CONVENTIONS
+
+### 1. API Endpoints Structure
+All endpoints follow REST conventions under `/api/v1/`:
+```
+/api/v1/users/          # User management
+/api/v1/buses/          # Bus catalog
+/api/v1/bookings/       # Bookings & payments
+/api/v1/reviews/        # Review system
+```
+
+### 2. Error Code System (MANDATORY)
+Every exception must include a structured error code:
+```python
+# Format: [APP]-[FILE]-[TYPE]-[NUMBER]
+# Error Code: BOK-SERV-VAL-008
+raise ValidationError('Amount mismatch', code='BOK-SERV-VAL-008')
+```
+
+All error codes are registered in `Docs/ERROR_REGISTRY.md`. When adding new errors:
+1. Check registry for next available number
+2. Add 4-line comment: Error Code, Message, Cause, Solution
+3. Register in ERROR_REGISTRY.md
+
+### 3. Model UUID Primary Keys
+All models use UUID primary keys:
+```python
+id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+```
+
+### 4. Soft Delete Pattern
+Financial records (Booking, Payment) use soft delete:
+```python
+is_deleted = models.BooleanField(default=False)
+deleted_at = models.DateTimeField(null=True, blank=True)
+deleted_by = models.ForeignKey(CustomUser, ...)
+```
+
+### 5. Booking Status Workflow
+```
+pending → confirmed → in_progress → completed
+                   ↓
+          cancelled_by_customer / cancelled_by_operator / expired
+```
+
+### 6. Service Layer Methods Use Keyword-Only Args
+```python
+def create_booking(*, validated_data, customer):  # Note the *
+    # Forces calling code to use: create_booking(validated_data=..., customer=...)
+```
+
+### 7. Frontend Error Handling
+Backend returns error format:
+```json
+{ "error": "User-friendly message", "code": "BOK-SERV-VAL-008" }
+```
+Map error codes to user messages in `frontend/lib/api.ts` using `ERROR_MESSAGES` constant.
+
+### 8. File Storage
+- **Development**: Cloudinary free tier
+- **Images**: Bus photos, user documents
+- **Max size**: 10MB per file
+- Upload handled by `cloudinary` package, URLs stored in `image_url` fields
+
+### 9. Celery Background Tasks
+Scheduled tasks in `backend/bus_booking/settings.py`:
+- `expire_pending_bookings` - Hourly (auto-expires bookings older than 24h)
+- `send_trip_reminders` - Daily at 9am (notify customers of upcoming trips)
+
+### 10. Testing Commands
+```bash
+# Backend (Django)
+python manage.py test                    # All tests
+python manage.py test apps.users         # Single app
+python manage.py test apps.bookings.tests_pricing  # Single file
+
+# Frontend (Next.js)
+npm run lint                            # ESLint check
+npm run build                           # Verify no build errors
+```
 
 ---
 
@@ -690,6 +848,74 @@ Production:
 
 ---
 
+## 🔌 THIRD-PARTY INTEGRATIONS
+
+### Supabase
+- **Purpose**: PostgreSQL database + phone authentication
+- **Auth**: OTP sent via Supabase Auth API
+- **Config**: `SUPABASE_URL`, `SUPABASE_KEY`
+- **Client**: `supabase` Python package for backend, `@supabase/supabase-js` for frontend
+
+### Cloudinary
+- **Purpose**: Image storage (bus photos, documents)
+- **Upload**: Direct upload from backend using `cloudinary.uploader.upload()`
+- **URLs**: Store returned `secure_url` in model fields
+- **Config**: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
+
+### Cashfree
+- **Purpose**: Payment gateway (online bookings)
+- **Flow**: Create order → Redirect to Cashfree → Webhook confirms payment
+- **Webhook**: Must verify HMAC signature before processing
+- **Config**: `CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, `CASHFREE_ENV` (TEST/PROD)
+
+### Brevo (via n8n)
+- **Purpose**: SMS/Email/WhatsApp notifications
+- **Flow**: Backend → n8n webhook → Brevo API
+- **Triggers**: Booking confirmation, trip reminders, operator verification
+- **Config**: `N8N_WEBHOOK_URL`, `BREVO_API_KEY`
+
+### Redis
+- **Purpose**: Celery task queue broker
+- **Local**: `redis://localhost:6379/0`
+- **Production**: Heroku Redis addon
+- **Config**: `CELERY_BROKER_URL`
+
+---
+
+## 📊 DATABASE PATTERNS
+
+### N+1 Query Prevention
+Always use `select_related()` for ForeignKeys and `prefetch_related()` for ManyToMany:
+```python
+# ❌ NEVER - N+1 queries
+bookings = Booking.objects.all()
+for booking in bookings:
+    print(booking.bus.name)  # Query per iteration!
+
+# ✅ ALWAYS - Single query
+bookings = Booking.objects.select_related('bus', 'customer', 'operator').all()
+```
+
+### Indexing Strategy
+Key indexes already in place:
+- **Users**: phone, role, city
+- **Buses**: operator, city, approval_status, rating_avg
+- **Bookings**: customer, operator, bus, pickup_date, status, booking_number
+- **Payments**: booking, cashfree_order_id
+
+When adding new queries, check if an index is needed using `EXPLAIN ANALYZE`.
+
+### Aggregates Under Lock
+When updating calculated fields (rating_avg, booking_count), always lock:
+```python
+with transaction.atomic():
+    bus = Bus.objects.select_for_update().get(pk=bus_id)
+    bus.rating_avg = calculate_rating(bus)
+    bus.save()
+```
+
+---
+
 ## 🎯 FINAL STANDARD
 
 **Every code suggestion must pass:**
@@ -704,8 +930,17 @@ Production:
 
 ---
 
-**END OF FAANG-LEVEL COPILOT INSTRUCTIONS**
+## 📚 KEY DOCUMENTATION
 
-*Version: 3.0 - Security & Race Condition Hardened*  
-*Prevents: 90% of bugs found in production reviews*  
-*Last Updated: 2026-02-14*
+- **CODEBASE_INDEX.md** - Complete file/endpoint reference
+- **ERROR_REGISTRY.md** - All error codes catalog
+- **PROJECT_STRUCTURE.md** - Architecture overview
+- **CONTEXT.md** - Business context & market analysis
+- **PRD.md** - Product requirements
+
+---
+
+**END OF COPILOT INSTRUCTIONS**
+
+*Version: 4.0 - Added practical development guidance*  
+*Last Updated: 2026-02-15*

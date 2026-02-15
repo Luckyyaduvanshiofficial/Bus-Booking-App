@@ -1,0 +1,336 @@
+version: "2"
+type: backend
+tech_stack:
+  - Python 3.11
+  - Django 4.2
+  - Django REST Framework
+  - PostgreSQL
+  - Redis
+  - Celery
+  - Brevo Email API
+  - Token Authentication
+
+features:
+  - name: Authentication API
+    description: OTP-based authentication with phone verification
+    files:
+      - backend/apps/users/views.py
+      - backend/apps/users/services.py
+      - backend/apps/users/serializers.py
+    endpoints:
+      - method: POST
+        path: /api/v1/users/auth/send-otp/
+        description: Send OTP to phone number
+        auth_required: false
+        request_schema:
+          body:
+            phone: string
+        response_schema:
+          "200": Message with verification_id
+          "400": Validation error
+      - method: POST
+        path: /api/v1/users/auth/verify-otp/
+        description: Verify OTP code
+        auth_required: false
+        request_schema:
+          body:
+            phone: string
+            otp: string
+        response_schema:
+          "200": Token and user data
+          "400": Invalid OTP
+      - method: POST
+        path: /api/v1/users/auth/register/
+        description: Register new user
+        auth_required: false
+        request_schema:
+          body:
+            phone: string
+            full_name: string
+            email: string
+            role: string
+        response_schema:
+          "201": User data with token
+          "400": Validation error
+    depends_on: []
+
+  - name: User Management API
+    description: User profile and document management
+    files:
+      - backend/apps/users/views.py
+      - backend/apps/users/services.py
+      - backend/apps/users/models.py
+    endpoints:
+      - method: GET
+        path: /api/v1/users/users/me/
+        description: Get current user profile
+        auth_required: true
+        response_schema:
+          "200": User object
+      - method: PATCH
+        path: /api/v1/users/users/update_profile/
+        description: Update user profile
+        auth_required: true
+        request_schema:
+          body:
+            full_name: string
+            email: string
+        response_schema:
+          "200": Updated user data
+      - method: POST
+        path: /api/v1/users/users/{id}/verify/
+        description: Verify operator account (Admin only)
+        auth_required: true
+        response_schema:
+          "200": Success message
+          "403": Permission denied
+    depends_on:
+      - Authentication API
+
+  - name: Bus Management API
+    description: CRUD operations for bus resources by operators
+    files:
+      - backend/apps/buses/views.py
+      - backend/apps/buses/services.py
+      - backend/apps/buses/models.py
+    endpoints:
+      - method: GET
+        path: /api/v1/buses/buses/
+        description: List and search buses
+        auth_required: false
+        response_schema:
+          "200": Paginated bus list
+      - method: POST
+        path: /api/v1/buses/buses/
+        description: Create new bus (Operator only)
+        auth_required: true
+        request_schema:
+          body:
+            name: string
+            registration_number: string
+            capacity: integer
+            bus_type: string
+            base_price_per_km: decimal
+        response_schema:
+          "201": Bus object
+          "403": Operator not verified
+      - method: GET
+        path: /api/v1/buses/buses/{id}/
+        description: Get bus details
+        auth_required: false
+        response_schema:
+          "200": Bus object with nested data
+      - method: PATCH
+        path: /api/v1/buses/buses/{id}/
+        description: Update bus (Owner only)
+        auth_required: true
+        response_schema:
+          "200": Updated bus data
+          "403": Not bus owner
+    depends_on:
+      - Authentication API
+      - User Management API
+
+  - name: Booking Management API
+    description: Booking creation and lifecycle management with race condition prevention
+    files:
+      - backend/apps/bookings/views.py
+      - backend/apps/bookings/services.py
+      - backend/apps/bookings/models.py
+      - backend/apps/bookings/pricing.py
+    endpoints:
+      - method: POST
+        path: /api/v1/bookings/bookings/
+        description: Create new booking with select_for_update locking
+        auth_required: true
+        request_schema:
+          body:
+            bus: integer
+            pickup_date: date
+            pickup_location: string
+            drop_location: string
+            passenger_count: integer
+            payment_mode: string
+        response_schema:
+          "201": Booking object with calculated pricing
+          "400": Validation error (BOK-SERV-CONFLICT-001 if unavailable)
+      - method: GET
+        path: /api/v1/bookings/bookings/
+        description: List user bookings
+        auth_required: true
+        response_schema:
+          "200": Paginated booking list
+      - method: GET
+        path: /api/v1/bookings/bookings/{id}/
+        description: Get booking details
+        auth_required: true
+        response_schema:
+          "200": Booking object
+          "403": Not booking participant
+      - method: POST
+        path: /api/v1/bookings/bookings/{id}/accept/
+        description: Accept booking (Operator only)
+        auth_required: true
+        response_schema:
+          "200": Success message
+          "403": Not bus owner
+      - method: POST
+        path: /api/v1/bookings/bookings/{id}/reject/
+        description: Reject booking with reason (Operator only)
+        auth_required: true
+        request_schema:
+          body:
+            rejection_reason: string
+        response_schema:
+          "200": Success message
+          "403": Not bus owner
+      - method: POST
+        path: /api/v1/bookings/bookings/{id}/mark_completed/
+        description: Mark booking as completed (Operator only)
+        auth_required: true
+        response_schema:
+          "200": Success message
+      - method: DELETE
+        path: /api/v1/bookings/bookings/{id}/
+        description: Soft delete booking
+        auth_required: true
+        response_schema:
+          "204": No content
+          "403": Cannot delete paid booking (BOK-VIEWS-PERM-004)
+    depends_on:
+      - Authentication API
+      - Bus Management API
+      - Notification System
+
+  - name: Payment Management API
+    description: Payment processing with webhook signature verification
+    files:
+      - backend/apps/bookings/views.py
+      - backend/apps/bookings/services.py
+      - backend/apps/bookings/models.py
+    endpoints:
+      - method: POST
+        path: /api/v1/bookings/payments/
+        description: Create payment record
+        auth_required: true
+        request_schema:
+          body:
+            booking: integer
+            amount: decimal
+            payment_method: string
+        response_schema:
+          "201": Payment object
+      - method: GET
+        path: /api/v1/bookings/payments/{id}/
+        description: Get payment details
+        auth_required: true
+        response_schema:
+          "200": Payment object
+      - method: POST
+        path: /api/v1/bookings/webhooks/cashfree/
+        description: Cashfree payment webhook with HMAC verification
+        auth_required: false
+        request_schema:
+          headers:
+            x-webhook-timestamp: string
+            x-webhook-signature: string
+          body:
+            payment_id: string
+            amount: decimal
+            status: string
+        response_schema:
+          "200": Success
+          "401": Invalid signature (PAY-VIEWS-AUTH-001)
+          "400": Amount mismatch (PAY-SERV-VAL-001)
+    depends_on:
+      - Booking Management API
+      - Notification System
+
+  - name: Review System API
+    description: Bus reviews with aggregate rating calculation
+    files:
+      - backend/apps/reviews/views.py
+      - backend/apps/reviews/services.py
+      - backend/apps/reviews/models.py
+    endpoints:
+      - method: POST
+        path: /api/v1/reviews/reviews/
+        description: Create review (after trip completion)
+        auth_required: true
+        request_schema:
+          body:
+            bus: integer
+            booking: integer
+            rating_overall: integer
+            comment: string
+        response_schema:
+          "201": Review object
+          "400": Booking not completed
+      - method: GET
+        path: /api/v1/reviews/reviews/
+        description: List reviews
+        auth_required: false
+        response_schema:
+          "200": Paginated review list
+      - method: PATCH
+        path: /api/v1/reviews/reviews/{id}/
+        description: Update review (Owner only)
+        auth_required: true
+        response_schema:
+          "200": Updated review
+    depends_on:
+      - Booking Management API
+
+  - name: Notification System
+    description: Real-time notifications via Brevo email API
+    files:
+      - backend/apps/common/notification_service.py
+      - backend/apps/common/tasks.py
+      - backend/apps/users/views.py
+    endpoints:
+      - method: GET
+        path: /api/v1/users/notifications/
+        description: List user notifications
+        auth_required: true
+        response_schema:
+          "200": Paginated notification list
+      - method: PATCH
+        path: /api/v1/users/notifications/{id}/mark_read/
+        description: Mark notification as read
+        auth_required: true
+        response_schema:
+          "200": Updated notification
+    depends_on:
+      - Authentication API
+
+known_limitations:
+  - issue: Race condition in booking creation (FIXED - using select_for_update)
+    location: backend/apps/bookings/services.py
+    impact: Previously allowed double-booking, now prevented
+  - issue: Payment amount not verified against booking (FIXED)
+    location: backend/apps/bookings/services.py
+    impact: Previously trusted client amounts, now recalculated server-side
+  - issue: Webhook signature not verified (FIXED)
+    location: backend/apps/bookings/views.py
+    impact: Previously vulnerable to fake webhooks, now HMAC verified
+  - issue: Notification system not integrated (FIXED)
+    location: backend/apps/common/notification_service.py
+    impact: Previously used console email, now uses Brevo API
+  - issue: Coupon usage counter race condition (FIXED)
+    location: backend/apps/bookings/services.py
+    impact: Previously allowed over-limit usage, now atomic with F()
+  - issue: Rating recalculation race condition (FIXED)
+    location: backend/apps/reviews/services.py
+    impact: Previously had rating flicker, now uses select_for_update
+  - issue: Missing permission checks on operator actions (FIXED)
+    location: backend/apps/bookings/views.py
+    impact: Previously lacked ownership verification, now checks bus.operator
+  - issue: Float used for money calculations (FIXED)
+    location: backend/apps/bookings/pricing.py
+    impact: Previously lost precision, now uses Decimal throughout
+  - issue: Hard deletes for financial records (FIXED)
+    location: backend/apps/bookings/models.py
+    impact: Previously deleted paid bookings, now soft delete only
+  - issue: Generic error messages without codes (FIXED)
+    location: All modules
+    impact: Previously hard to debug, now structured with error codes
